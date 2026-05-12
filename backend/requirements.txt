@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+websockets
+python-dotenv
+requests
+duckdb
+openai
+crewai
+crewai-tools
+open-clip-torch
+torch
+pillow

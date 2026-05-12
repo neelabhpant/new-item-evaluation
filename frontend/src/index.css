@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+@theme {
+  /* ── Legacy tokens (still used by Catalog / Merchant / Supplier / Batch / History tabs) ── */
+  --color-orange-brand: #EA580C;
+  --color-green-brand: #16A34A;
+  --color-amber-brand: #D97706;
+  --color-red-brand: #DC2626;
+  --color-gray-bg: #F3F4F6;
+  --color-gray-border: #E5E7EB;
+  --color-gray-text: #6B7280;
+
+  /* ── Reasoner palette (Evaluate tab + everything going forward) ── */
+  --color-reasoner-bg:          #FAFAF9;
+  --color-reasoner-paper:       #FFFFFF;
+  --color-reasoner-ink:         #0E1012;
+  --color-reasoner-body:        #2E3238;
+  --color-reasoner-line:        #E5E7EB;
+  --color-reasoner-line-2:      #D1D5DB;
+  --color-reasoner-mute:        #6B7280;
+  --color-reasoner-dim:         #9CA3AF;
+  --color-reasoner-accent:      #EA580C;
+  --color-reasoner-accent-soft: #FFEDD5;
+  --color-reasoner-accent-2:    #FB923C;
+  --color-reasoner-green:       #15803D;
+  --color-reasoner-red:         #B91C1C;
+  --color-reasoner-violet:      #6D28D9;
+  --color-reasoner-cyan:        #0E7490;
+
+  /* ── Typography ── */
+  --font-sans:  'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-serif: 'Newsreader', ui-serif, Georgia, serif;
+  --font-mono:  'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: #F9FAFB;
+  color: #111827;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Reasoner motion primitives ──
+   Used by AgentRail (running state), ArtifactCard (running tone), and
+   running skeletons. Low-cost CSS; no JS animation library for Day 2. */
+@keyframes shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes dotPulse {
+  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+  40%           { opacity: 1;   transform: scale(1); }
+}
+
+@keyframes ruleSweep {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
+@keyframes artifactPulse {
+  0%   { box-shadow: 0 0 0 0 rgba(234, 88, 12, 0.40); }
+  40%  { box-shadow: 0 0 0 8px rgba(234, 88, 12, 0.12); }
+  100% { box-shadow: 0 0 0 0 rgba(234, 88, 12, 0);    }
+}
+
+[data-pulsing="true"] {
+  animation: artifactPulse 1.5s ease-out;
+}
