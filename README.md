@@ -75,17 +75,43 @@ curl http://localhost:9200   # verify
 python -m venv venv
 source venv/bin/activate
 pip install -r backend/requirements.txt
+```
 
-# Seed DuckDB (first time)
+### 4. One-time bootstrap (~10–15 minutes)
+
+Populates the OpenSearch index and seeds DuckDB. Run after `docker compose up -d` and before starting the backend.
+
+```bash
+# 1. Download ~200–300 snack products from Open Food Facts
+#    (writes data/images/catalog/*.jpg + data/catalog_products.json)
+python scripts/download_catalog.py
+
+# 2. Assign categories to each product
+python scripts/assign_categories.py
+
+# 3. Create the OpenSearch index with the knn_vector mapping (dim=512, hnsw, cosinesimil)
+python scripts/create_index.py
+
+# 4. Generate CLIP embeddings and index every product (5–10 min on CPU)
+python scripts/index_catalog.py
+
+# 5. Seed DuckDB (products, sales, category benchmarks, vendors)
 python backend/data/init_db.py
+```
 
-# Run server
+Verify the OpenSearch index is populated:
+
+```bash
+curl http://localhost:9200/product-catalog/_count
+```
+
+### 5. Run the backend
+
+```bash
 cd backend && python -m uvicorn main:app --port 8001
 ```
 
-> Note: OpenSearch product indexing (CLIP embeddings for the 295-product catalog) is a one-time bootstrap step. Source product images and the indexing script are not included in this repo — bring your own catalog or contact the maintainer.
-
-### 4. Frontend
+### 6. Frontend
 
 ```bash
 cd frontend
@@ -93,7 +119,7 @@ npm install
 npm run dev   # http://localhost:5173, proxies /api and /ws to backend:8001
 ```
 
-### 5. Smoke test
+### 7. Smoke test
 
 ```bash
 source venv/bin/activate
