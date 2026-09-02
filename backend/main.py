@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import logging
+import os
 import sys
 import tempfile
 import threading
@@ -13,6 +14,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -23,13 +25,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pipeline.orchestrator import run_evaluation
 from pipeline.followup import run_followup
 from tools.database_client import get_catalog_summary, get_all_products, get_evaluations, get_evaluation_stats
+from tools import db as tabular_db
+from tools import llm_config
+from tools import opensearch_conn
+
+IMAGE_DIR = BASE_DIR / "data" / "images" / "catalog"
+FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
 
 app = FastAPI(title="New Item Evaluation Platform")
 
+# Same-origin in production (FastAPI serves the built frontend); the Vite dev
+# server on :5173 is the only cross-origin caller by default.
+_cors_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials="*" not in _cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -106,8 +117,14 @@ def _run_pipeline(
     loop: asyncio.AbstractEventLoop,
 ) -> None:
     queue: asyncio.Queue = evaluations[evaluation_id]["queue"]
+    last_progress: dict[str, Any] = {"phase": "data_collection", "step": 1, "step_name": "Submission", "agent": "system"}
 
     def send_msg(msg: dict) -> None:
+        # Remember the stage that was running so an error can be attributed to it.
+        if msg.get("status") == "running":
+            for k in ("phase", "step", "step_name", "agent"):
+                if k in msg:
+                    last_progress[k] = msg[k]
         loop.call_soon_threadsafe(queue.put_nowait, msg)
 
     try:
@@ -128,9 +145,9 @@ def _run_pipeline(
         logging.error("Pipeline error: %s\n%s", e, traceback.format_exc())
         send_msg({
             "phase": "done",
-            "step": 1,
-            "step_name": "Error",
-            "agent": "system",
+            "step": last_progress["step"],
+            "step_name": last_progress["step_name"],
+            "agent": last_progress["agent"],
             "status": "error",
             "message": str(e),
             "output": None,
@@ -265,19 +282,27 @@ async def followup_ws(websocket: WebSocket, followup_id: str):
 async def get_product(sku: str) -> JSONResponse:
     import requests as req
     try:
-        resp = req.get(
-            f"http://localhost:9200/product-catalog/_doc/{sku}",
-            headers={"Content-Type": "application/json"},
-            timeout=5,
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            source = data.get("_source", {})
-            source.pop("embedding", None)
+        source = opensearch_conn.get_document(sku)
+        if source is not None:
             return JSONResponse(content=source)
         return JSONResponse(status_code=404, content={"error": f"Product {sku} not found"})
-    except req.exceptions.ConnectionError:
+    except req.exceptions.RequestException:
         return JSONResponse(status_code=503, content={"error": "OpenSearch is not available"})
+
+
+@app.get("/api/health")
+async def health() -> JSONResponse:
+    """Deployment health: OpenSearch, tabular backend, LLM provider, frontend build."""
+    payload = {
+        "opensearch": opensearch_conn.describe(),
+        "database": tabular_db.describe(),
+        "llm": llm_config.describe(),
+        "frontend_built": FRONTEND_DIST.exists(),
+        "images": len(list(IMAGE_DIR.glob("*.jpg"))) if IMAGE_DIR.exists() else 0,
+    }
+    ok = payload["opensearch"].get("reachable") and payload["database"].get("ok") and payload["llm"].get("has_key")
+    payload["status"] = "ok" if ok else "degraded"
+    return JSONResponse(status_code=200 if ok else 503, content=payload)
 
 
 @app.get("/api/catalog/summary")
@@ -514,12 +539,22 @@ async def latest_evaluation() -> JSONResponse:
 
 @app.get("/api/images/{filename}")
 async def get_image(filename: str) -> FileResponse:
-    image_path = BASE_DIR / "data" / "images" / "catalog" / filename
-    if image_path.exists():
+    safe_name = Path(filename).name  # no path traversal
+    image_path = (IMAGE_DIR / safe_name).resolve()
+    if image_path.parent == IMAGE_DIR.resolve() and image_path.exists():
         return FileResponse(str(image_path), media_type="image/jpeg")
     return JSONResponse(status_code=404, content={"error": "Image not found"})
 
 
+# Serve the built React app from the same origin (Cloudera AI Application exposes
+# exactly one port). Mounted last so the /api and /ws routes above take precedence.
+if FRONTEND_DIST.exists():
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")
+else:
+    logging.warning("frontend/dist not found - API only (run deploy/build_frontend.sh, or use `npm run dev`)")
+
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    port = int(os.getenv("PORT") or os.getenv("CDSW_APP_PORT") or 8001)
+    uvicorn.run(app, host="0.0.0.0", port=port)

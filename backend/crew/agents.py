@@ -1,12 +1,20 @@
-import os
+import sys
+from pathlib import Path
 
 from crewai import Agent, LLM
 
-MODEL_NAME = os.getenv("OPENAI_MODEL_NAME", "gpt-4o-mini")
+# Make `tools.*` importable when this package is run standalone (python backend/crew/crew.py)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from tools.llm_config import crew_llm
 
 
 def _llm() -> LLM:
-    return LLM(model=f"openai/{MODEL_NAME}")
+    """LLM bound to the configured provider (Cloudera AI Inference or OpenAI).
+
+    Built fresh per agent / per evaluation so a refreshed workload token is picked up.
+    """
+    return crew_llm()
 
 
 def risk_market_analyst() -> Agent:
@@ -23,6 +31,7 @@ def risk_market_analyst() -> Agent:
         llm=_llm(),
         verbose=True,
         allow_delegation=False,
+        max_retry_limit=1,
     )
 
 
@@ -39,6 +48,7 @@ def financial_modeler() -> Agent:
         llm=_llm(),
         verbose=True,
         allow_delegation=False,
+        max_retry_limit=1,
     )
 
 
@@ -61,4 +71,5 @@ def recommendation_synthesizer() -> Agent:
         llm=_llm(),
         verbose=True,
         allow_delegation=False,
+        max_retry_limit=1,
     )

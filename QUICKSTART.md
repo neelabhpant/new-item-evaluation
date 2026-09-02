@@ -1,4 +1,6 @@
-# Quick Start
+# Quick Start (laptop)
+
+For Cloudera AI see [DEPLOY_CLOUDERA.md](DEPLOY_CLOUDERA.md).
 
 ## Prerequisites
 
@@ -19,10 +21,10 @@ Verify: `curl http://localhost:9200`
 ```bash
 source venv/bin/activate
 cd backend
-uvicorn main:app --reload --port 8000
+uvicorn main:app --reload --port 8001
 ```
 
-Runs on http://localhost:8000
+Runs on http://localhost:8001
 
 ## Start Frontend
 
@@ -38,15 +40,14 @@ Runs on http://localhost:5173
 
 ```bash
 source venv/bin/activate
-cd backend
-python data/init_db.py
+python backend/data/init_db.py --backend duckdb
 ```
 
 ## Kill Servers
 
 ```bash
 # Kill backend
-lsof -ti:8000 | xargs kill -9
+lsof -ti:8001 | xargs kill -9
 
 # Kill frontend
 lsof -ti:5173 | xargs kill -9
@@ -59,6 +60,6 @@ docker compose down
 
 | Service     | Port |
 |-------------|------|
-| Backend     | 8000 |
+| Backend     | 8001 |
 | Frontend    | 5173 |
 | OpenSearch  | 9200 |

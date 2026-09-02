@@ -1,14 +1,42 @@
+"""Seed the retail tables (products, sales, category benchmarks, vendors).
+
+The synthetic numbers are generated in pure Python from data/catalog_products.json
+with a fixed seed (Random(42)) so every backend gets identical data:
+
+  python backend/data/init_db.py --backend duckdb               # laptop: data/store.db
+  python backend/data/init_db.py --backend impala               # Cloudera: Iceberg tables via Impala
+  python backend/data/init_db.py --backend impala --recreate    # drop + rebuild
+  python backend/data/init_db.py --if-missing                   # no-op when tables already populated
+
+The backend defaults to the DB_BACKEND environment variable (see backend/tools/db.py).
+"""
+
+import argparse
 import json
-import random
 import os
+import random
+import sys
 from datetime import date, timedelta
 from pathlib import Path
 
-import duckdb
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
+def _repo_root(levels_up: int) -> Path:
+    """Repo root whether run as a file or inside Cloudera AI's PBJ kernel (no __file__)."""
+    f = globals().get("__file__")
+    if f:
+        return Path(f).resolve().parents[levels_up]
+    cwd = Path.cwd().resolve()
+    for p in (cwd, *cwd.parents):
+        if (p / "backend" / "main.py").exists():
+            return p
+    return cwd
+
+
+BASE_DIR = _repo_root(2)
+sys.path.insert(0, str(BASE_DIR / "backend"))
+
 CATALOG_PATH = BASE_DIR / "data" / "catalog_products.json"
-DB_PATH = BASE_DIR / "data" / "store.db"
+DB_PATH = Path(os.getenv("DUCKDB_PATH", str(BASE_DIR / "data" / "store.db")))
 
 CATEGORY_PRICE_RANGES: dict[str, tuple[float, float]] = {
     "Protein Bars": (3.00, 7.00),
@@ -84,29 +112,72 @@ SHELF_POSITIONS = ["eye-level"] * 5 + ["top"] * 3 + ["bottom"] * 3 + ["endcap"] 
 COMPLIANCE_RATINGS = ["Excellent"] * 4 + ["Good"] * 5 + ["Fair"] * 2 + ["Needs Improvement"] * 1
 RELATIONSHIP_TIERS = ["Strategic"] * 2 + ["Preferred"] * 4 + ["Standard"] * 5 + ["Probationary"] * 1
 
+# ---------------------------------------------------------------------------
+# Schema (portable DDL; Impala adds STORED BY ICEBERG, DuckDB adds PRIMARY KEY)
+# ---------------------------------------------------------------------------
+
+SCHEMAS: dict[str, list[tuple[str, str]]] = {
+    "products": [
+        ("sku", "VARCHAR"), ("name", "VARCHAR"), ("category", "VARCHAR"), ("brand", "VARCHAR"),
+        ("price", "DECIMAL(8,2)"), ("cost", "DECIMAL(8,2)"), ("margin_pct", "DECIMAL(5,2)"),
+        ("status", "VARCHAR"), ("shelf_position", "VARCHAR"), ("authorized_date", "DATE"),
+        ("image_path", "VARCHAR"),
+    ],
+    "sales_performance": [
+        ("sku", "VARCHAR"), ("annual_revenue", "DECIMAL(12,2)"), ("weekly_units", "INTEGER"),
+        ("velocity_rank", "INTEGER"), ("yoy_growth", "DECIMAL(5,2)"), ("stores_carrying", "INTEGER"),
+        ("trend", "VARCHAR"),
+    ],
+    "category_benchmarks": [
+        ("category", "VARCHAR"), ("market_size", "DECIMAL(14,2)"), ("yoy_growth", "DECIMAL(5,2)"),
+        ("avg_margin", "DECIMAL(5,2)"), ("avg_price", "DECIMAL(8,2)"), ("sku_count", "INTEGER"),
+        ("top_trend", "VARCHAR"),
+    ],
+    "vendor_scorecard": [
+        ("vendor_name", "VARCHAR"), ("fill_rate", "DECIMAL(5,2)"), ("otif_score", "DECIMAL(5,2)"),
+        ("compliance_rating", "VARCHAR"), ("open_chargebacks", "INTEGER"), ("relationship_tier", "VARCHAR"),
+    ],
+    "evaluation_history": [
+        ("id", "VARCHAR"), ("timestamp", "TIMESTAMP"), ("product_name", "VARCHAR"), ("brand", "VARCHAR"),
+        ("category", "VARCHAR"), ("inferred_category", "VARCHAR"), ("price", "DECIMAL(8,2)"),
+        ("claims", "VARCHAR"), ("verdict", "VARCHAR"), ("confidence", "INTEGER"),
+        ("overlap_classification", "VARCHAR"), ("expected_revenue", "DECIMAL(12,2)"),
+        ("max_similarity", "DECIMAL(5,4)"), ("risk_rating", "VARCHAR"), ("image_path", "VARCHAR"),
+    ],
+}
+PRIMARY_KEYS = {"products": "sku", "sales_performance": "sku", "category_benchmarks": "category",
+                "vendor_scorecard": "vendor_name", "evaluation_history": "id"}
+SEED_TABLES = ["products", "sales_performance", "category_benchmarks", "vendor_scorecard"]
+
+
+def create_table_sql(table: str, backend: str, qualified: str, if_not_exists: bool = True) -> str:
+    cols = SCHEMAS[table]
+    ine = "IF NOT EXISTS " if if_not_exists else ""
+    if backend == "impala":
+        # Impala types: STRING instead of VARCHAR, INT, no DEFAULT / PRIMARY KEY on Iceberg.
+        # Column names are backtick-quoted because `timestamp` is a reserved word.
+        col_defs = ", ".join(
+            f"`{c}` {t.replace('VARCHAR', 'STRING').replace('INTEGER', 'INT')}" for c, t in cols
+        )
+        return f"CREATE TABLE {ine}{qualified} ({col_defs}) STORED BY ICEBERG"
+    col_defs = ", ".join(
+        f'"{c}" {t}' + (" PRIMARY KEY" if c == PRIMARY_KEYS[table] else "")
+        + (" DEFAULT CURRENT_TIMESTAMP" if table == "evaluation_history" and c == "timestamp" else "")
+        for c, t in cols
+    )
+    return f"CREATE TABLE {ine}{qualified} ({col_defs})"
+
+
+# ---------------------------------------------------------------------------
+# Synthetic data generators (unchanged logic, no I/O)
+# ---------------------------------------------------------------------------
 
 def load_catalog() -> list[dict]:
     with open(CATALOG_PATH, "r") as f:
         return json.load(f)
 
 
-def seed_products(con: duckdb.DuckDBPyConnection, catalog: list[dict], rng: random.Random) -> None:
-    con.execute("""
-        CREATE TABLE products (
-            sku VARCHAR PRIMARY KEY,
-            name VARCHAR,
-            category VARCHAR,
-            brand VARCHAR,
-            price DECIMAL(8,2),
-            cost DECIMAL(8,2),
-            margin_pct DECIMAL(5,2),
-            status VARCHAR,
-            shelf_position VARCHAR,
-            authorized_date DATE,
-            image_path VARCHAR
-        )
-    """)
-
+def gen_products(catalog: list[dict], rng: random.Random) -> list[tuple]:
     base_date = date(2020, 1, 1)
     rows = []
     for p in catalog:
@@ -128,26 +199,10 @@ def seed_products(con: duckdb.DuckDBPyConnection, catalog: list[dict], rng: rand
         authorized_date = base_date + timedelta(days=days_offset)
 
         rows.append((sku, name, category, brand, price, cost, margin_pct, status, shelf_position, authorized_date, image_path))
-
-    con.executemany(
-        "INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        rows,
-    )
+    return rows
 
 
-def seed_sales_performance(con: duckdb.DuckDBPyConnection, catalog: list[dict], rng: random.Random, product_prices: dict[str, float]) -> None:
-    con.execute("""
-        CREATE TABLE sales_performance (
-            sku VARCHAR PRIMARY KEY,
-            annual_revenue DECIMAL(12,2),
-            weekly_units INTEGER,
-            velocity_rank INTEGER,
-            yoy_growth DECIMAL(5,2),
-            stores_carrying INTEGER,
-            trend VARCHAR
-        )
-    """)
-
+def gen_sales_performance(catalog: list[dict], rng: random.Random, product_prices: dict[str, float]) -> list[tuple]:
     category_skus: dict[str, list[tuple[str, int]]] = {}
     rows_pre_rank = []
 
@@ -182,30 +237,10 @@ def seed_sales_performance(con: duckdb.DuckDBPyConnection, catalog: list[dict], 
         for rank, (sku, _) in enumerate(sorted_skus, 1):
             velocity_ranks[sku] = rank
 
-    rows = []
-    for row in rows_pre_rank:
-        sku = row[0]
-        rows.append((sku, row[1], row[2], velocity_ranks[sku], row[4], row[5], row[6]))
-
-    con.executemany(
-        "INSERT INTO sales_performance VALUES (?, ?, ?, ?, ?, ?, ?)",
-        rows,
-    )
+    return [(r[0], r[1], r[2], velocity_ranks[r[0]], r[4], r[5], r[6]) for r in rows_pre_rank]
 
 
-def seed_category_benchmarks(con: duckdb.DuckDBPyConnection, categories: set[str], rng: random.Random, category_sku_counts: dict[str, int]) -> None:
-    con.execute("""
-        CREATE TABLE category_benchmarks (
-            category VARCHAR PRIMARY KEY,
-            market_size DECIMAL(14,2),
-            yoy_growth DECIMAL(5,2),
-            avg_margin DECIMAL(5,2),
-            avg_price DECIMAL(8,2),
-            sku_count INTEGER,
-            top_trend VARCHAR
-        )
-    """)
-
+def gen_category_benchmarks(categories: set[str], rng: random.Random, category_sku_counts: dict[str, int]) -> list[tuple]:
     rows = []
     for cat in sorted(categories):
         size_lo, size_hi = CATEGORY_MARKET_SIZE.get(cat, (500e6, 1.5e9))
@@ -218,28 +253,11 @@ def seed_category_benchmarks(con: duckdb.DuckDBPyConnection, categories: set[str
         avg_price = round((price_lo + price_hi) / 2, 2)
         avg_margin = round(rng.uniform(35.0, 55.0), 2)
 
-        sku_count = category_sku_counts.get(cat, 0)
-
-        rows.append((cat, market_size, yoy_growth, avg_margin, avg_price, sku_count, top_trend))
-
-    con.executemany(
-        "INSERT INTO category_benchmarks VALUES (?, ?, ?, ?, ?, ?, ?)",
-        rows,
-    )
+        rows.append((cat, market_size, yoy_growth, avg_margin, avg_price, category_sku_counts.get(cat, 0), top_trend))
+    return rows
 
 
-def seed_vendor_scorecard(con: duckdb.DuckDBPyConnection, vendors: set[str], rng: random.Random) -> None:
-    con.execute("""
-        CREATE TABLE vendor_scorecard (
-            vendor_name VARCHAR PRIMARY KEY,
-            fill_rate DECIMAL(5,2),
-            otif_score DECIMAL(5,2),
-            compliance_rating VARCHAR,
-            open_chargebacks INTEGER,
-            relationship_tier VARCHAR
-        )
-    """)
-
+def gen_vendor_scorecard(vendors: set[str], rng: random.Random) -> list[tuple]:
     rows = []
     for vendor in sorted(vendors):
         fill_rate = round(rng.uniform(85.0, 99.5), 2)
@@ -256,24 +274,13 @@ def seed_vendor_scorecard(con: duckdb.DuckDBPyConnection, vendors: set[str], rng
         relationship_tier = rng.choice(tier_choices)
 
         rows.append((vendor, fill_rate, otif_score, compliance_rating, open_chargebacks, relationship_tier))
-
-    con.executemany(
-        "INSERT INTO vendor_scorecard VALUES (?, ?, ?, ?, ?, ?)",
-        rows,
-    )
+    return rows
 
 
-def main() -> None:
+def generate_all() -> dict[str, list[tuple]]:
+    """Deterministically generate every seed table (same RNG order as the original DuckDB seeder)."""
     rng = random.Random(42)
-
     catalog = load_catalog()
-    print(f"Loaded {len(catalog)} products from catalog")
-
-    if DB_PATH.exists():
-        os.remove(DB_PATH)
-        print(f"Removed existing database at {DB_PATH}")
-
-    con = duckdb.connect(str(DB_PATH))
 
     categories: set[str] = set()
     vendors: set[str] = set()
@@ -285,72 +292,125 @@ def main() -> None:
         vendors.add(brand)
         category_sku_counts[cat] = category_sku_counts.get(cat, 0) + 1
 
-    seed_products(con, catalog, rng)
-    print(f"  products:            {con.execute('SELECT COUNT(*) FROM products').fetchone()[0]} rows")
+    products = gen_products(catalog, rng)
+    product_prices = {r[0]: float(r[4]) for r in products}
+    return {
+        "products": products,
+        "sales_performance": gen_sales_performance(catalog, rng, product_prices),
+        "category_benchmarks": gen_category_benchmarks(categories, rng, category_sku_counts),
+        "vendor_scorecard": gen_vendor_scorecard(vendors, rng),
+    }
 
-    # Query product prices to pass into sales seeding (revenue = units * price * 52)
-    price_rows = con.execute("SELECT sku, price FROM products").fetchall()
-    product_prices = {r[0]: float(r[1]) for r in price_rows}
 
-    seed_sales_performance(con, catalog, rng, product_prices)
-    print(f"  sales_performance:   {con.execute('SELECT COUNT(*) FROM sales_performance').fetchone()[0]} rows")
+# ---------------------------------------------------------------------------
+# Persistence
+# ---------------------------------------------------------------------------
 
-    seed_category_benchmarks(con, categories, rng, category_sku_counts)
-    print(f"  category_benchmarks: {con.execute('SELECT COUNT(*) FROM category_benchmarks').fetchone()[0]} rows")
+def _sql_literal(v) -> str:
+    if v is None:
+        return "NULL"
+    if isinstance(v, bool):
+        return "TRUE" if v else "FALSE"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    if isinstance(v, date):
+        return f"DATE '{v.isoformat()}'"
+    s = str(v).replace("\\", "\\\\").replace("'", "\\'")
+    return f"'{s}'"
 
-    seed_vendor_scorecard(con, vendors, rng)
-    print(f"  vendor_scorecard:    {con.execute('SELECT COUNT(*) FROM vendor_scorecard').fetchone()[0]} rows")
 
-    print("\n--- Sample: products ---")
-    for row in con.execute("SELECT sku, name, category, brand, price, cost, margin_pct, status FROM products LIMIT 5").fetchall():
-        print(f"  {row}")
+def seed_impala(tables: dict[str, list[tuple]], recreate: bool, if_missing: bool, batch: int = 100) -> None:
+    from tools import db
 
-    print("\n--- Sample: sales_performance ---")
-    for row in con.execute("SELECT sku, annual_revenue, weekly_units, velocity_rank, yoy_growth, trend FROM sales_performance LIMIT 5").fetchall():
-        print(f"  {row}")
+    dbname = db.database()
+    db.execute(f"CREATE DATABASE IF NOT EXISTS {dbname}")
+    for table in SEED_TABLES + ["evaluation_history"]:
+        q = db.qualify(table)
+        if recreate and table != "evaluation_history":
+            db.execute(f"DROP TABLE IF EXISTS {q}")
+        db.execute(create_table_sql(table, "impala", q))
+        if table == "evaluation_history":
+            continue
+        rows = tables[table]
+        existing = int(db.scalar(f"SELECT COUNT(*) FROM {q}") or 0)
+        if existing == len(rows):
+            print(f"  {table:20s} already populated ({existing} rows) - skipping")
+            continue
+        if existing and if_missing:
+            print(f"  {table:20s} has {existing} rows (expected {len(rows)}) - leaving as is (--if-missing)")
+            continue
+        if existing:
+            print(f"  {table:20s} has {existing} rows, expected {len(rows)} - truncating")
+            db.execute(f"TRUNCATE TABLE {q}")
+        cols = ", ".join(f"`{c}`" for c, _ in SCHEMAS[table])
+        for i in range(0, len(rows), batch):
+            chunk = rows[i:i + batch]
+            values = ", ".join("(" + ", ".join(_sql_literal(v) for v in r) + ")" for r in chunk)
+            db.execute(f"INSERT INTO {q} ({cols}) VALUES {values}")
+        print(f"  {table:20s} {int(db.scalar(f'SELECT COUNT(*) FROM {q}') or 0)} rows (Iceberg)")
 
-    print("\n--- Sample: category_benchmarks ---")
-    for row in con.execute("SELECT * FROM category_benchmarks LIMIT 5").fetchall():
-        print(f"  {row}")
 
-    print("\n--- Sample: vendor_scorecard ---")
-    for row in con.execute("SELECT * FROM vendor_scorecard LIMIT 5").fetchall():
-        print(f"  {row}")
+def seed_duckdb(tables: dict[str, list[tuple]], recreate: bool, if_missing: bool) -> None:
+    import duckdb
 
-    print(f"\nCategories: {len(categories)}")
-    for cat in sorted(categories):
-        count = category_sku_counts[cat]
-        print(f"  {cat}: {count} SKUs")
-
-    print(f"\nVendors: {len(vendors)}")
-
+    if DB_PATH.exists():
+        if if_missing:
+            con = duckdb.connect(str(DB_PATH), read_only=True)
+            try:
+                n = con.execute("SELECT COUNT(*) FROM products").fetchone()[0]
+            except Exception:
+                n = -1
+            con.close()
+            if n == len(tables["products"]):
+                print(f"{DB_PATH} already populated ({n} products) - skipping (--if-missing)")
+                return
+        os.remove(DB_PATH)
+        print(f"Removed existing database at {DB_PATH}")
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect(str(DB_PATH))
+    for table in SEED_TABLES:
+        con.execute(create_table_sql(table, "duckdb", table, if_not_exists=False))
+        rows = tables[table]
+        ph = ", ".join(["?"] * len(SCHEMAS[table]))
+        con.executemany(f"INSERT INTO {table} VALUES ({ph})", rows)
+        print(f"  {table:20s} {con.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]} rows")
+    con.execute(create_table_sql("evaluation_history", "duckdb", "evaluation_history"))
     con.close()
-    print(f"\nDatabase saved to {DB_PATH}")
+    print(f"Database saved to {DB_PATH}")
 
 
 def ensure_evaluation_history():
-    """Create evaluation_history table if it doesn't exist. Safe to call multiple times."""
-    con = duckdb.connect(str(DB_PATH), read_only=False)
-    con.execute("""
-        CREATE TABLE IF NOT EXISTS evaluation_history (
-            id VARCHAR PRIMARY KEY,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            product_name VARCHAR,
-            brand VARCHAR,
-            category VARCHAR,
-            inferred_category VARCHAR,
-            price DECIMAL(8,2),
-            claims VARCHAR,
-            verdict VARCHAR,
-            confidence INTEGER,
-            overlap_classification VARCHAR,
-            expected_revenue DECIMAL(12,2),
-            max_similarity DECIMAL(5,4),
-            risk_rating VARCHAR,
-            image_path VARCHAR
-        )
-    """)
-    con.close()
+    """Create evaluation_history if it doesn't exist. Safe to call multiple times (app startup)."""
+    from tools import db
+
+    backend = db.backend()
+    if backend == "impala":
+        db.execute(f"CREATE DATABASE IF NOT EXISTS {db.database()}")
+        db.execute(create_table_sql("evaluation_history", "impala", db.qualify("evaluation_history")))
+    else:
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        db.execute(create_table_sql("evaluation_history", "duckdb", "evaluation_history"))
+
+
+def main(argv: list[str] | None = None) -> None:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--backend", choices=["duckdb", "impala"], default=os.getenv("DB_BACKEND", "duckdb"))
+    ap.add_argument("--recreate", action="store_true", help="drop and rebuild the seed tables")
+    ap.add_argument("--if-missing", action="store_true", help="do nothing when tables are already populated")
+    args, _ = ap.parse_known_args(argv)
+    os.environ["DB_BACKEND"] = args.backend
+
+    tables = generate_all()
+    print(f"Generated seed data from {CATALOG_PATH.name}: "
+          + ", ".join(f"{k}={len(v)}" for k, v in tables.items()))
+    print(f"Backend: {args.backend}")
+    if args.backend == "impala":
+        seed_impala(tables, recreate=args.recreate, if_missing=args.if_missing)
+    else:
+        seed_duckdb(tables, recreate=args.recreate, if_missing=args.if_missing)
+
+    from tools import db
+    print("Done:", db.describe())
 
 
 if __name__ == "__main__":

@@ -11,6 +11,10 @@ DataPackage and prior agent outputs.
 
 import json
 import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from typing import Any, Callable
 
 
@@ -90,12 +94,11 @@ def run_followup(
     tasks_output = result.get("tasks_output", [])
 
     prompt = _build_prompt(raw_data, tasks_output, question)
-    model_name = os.getenv("OPENAI_MODEL_NAME", "gpt-4o-mini")
-
     try:
-        from openai import OpenAI
+        from tools.llm_config import openai_client, settings
 
-        client = OpenAI()
+        client = openai_client()
+        model_name = settings()["model"]
         stream = client.chat.completions.create(
             model=model_name,
             messages=[

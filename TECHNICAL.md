@@ -32,6 +32,7 @@ A complete end-to-end technical reference for the New Item Evaluation Platform. 
 10. [Frontend Architecture](#10-frontend-architecture)
 11. [End-to-End Setup Guide](#11-end-to-end-setup-guide)
 12. [Architectural Decisions & FAQ](#12-architectural-decisions--faq)
+13. [Cloudera AI Deployment](#13-cloudera-ai-deployment)
 
 ---
 
@@ -456,7 +457,7 @@ return Crew(
 
 `Process.sequential` means tasks run in order. The `context=[task1]` on task2 passes task1's output text into task2's prompt. CrewAI handles the prompt construction; we provide the data.
 
-**LLM:** OpenAI GPT-4o-mini by default (via CrewAI's `LLM` wrapper). Configurable via the `OPENAI_MODEL_NAME` environment variable. Both prompt and completion go through the OpenAI API.
+**LLM:** resolved by `backend/tools/llm_config.py`. On Cloudera AI (`LLM_PROVIDER=caii`) the agents call an open-weight model served by Cloudera AI Inference through its OpenAI-compatible API (validated with Llama 3.1 8B Instruct); on a laptop (`LLM_PROVIDER=openai`) they call OpenAI GPT-4o-mini. CrewAI's `LLM` wrapper is given the base URL, model id and bearer token explicitly.
 
 ### 6.1 Agent 1: Risk & Market Analyst
 
@@ -922,3 +923,22 @@ No. The OpenAI API is the only external dependency at evaluation time. Everythin
 
 **How does follow-up Q&A work?**
 `backend/pipeline/followup.py` looks up the cached DataPackage and the three task outputs from the original evaluation. It constructs a system prompt that includes all that context and the user's question, then streams completion deltas through the openai SDK directly. No CrewAI, no second pipeline run. Scoped: the LLM is instructed to answer only questions about *this product's evaluation*, not start a new analysis.
+
+
+---
+
+## 13. Cloudera AI Deployment
+
+The full deployment guide is in [DEPLOY_CLOUDERA.md](DEPLOY_CLOUDERA.md). This section records the design decisions.
+
+**One application, one origin.** Cloudera AI Workbench exposes a single port per Application (`CDSW_APP_PORT`), so `deploy/app.py` runs uvicorn with one worker and FastAPI serves `frontend/dist` (built by `deploy/build_frontend.sh`) together with `/api` and `/ws`. The frontend needed no change: all calls are relative and the WebSocket URL is derived from `window.location`. One worker is mandatory because evaluation state lives in in-process dictionaries.
+
+**LLM provider abstraction (`backend/tools/llm_config.py`).** The two call sites (`crew/agents.py`, `pipeline/followup.py`) ask this module for a CrewAI `LLM` or an `openai.OpenAI` client. For `LLM_PROVIDER=caii` the model string stays `openai/<model>` (litellm's OpenAI-compatible adapter) with `base_url` pointing at the Cloudera AI Inference endpoint. The bearer token is resolved per call: `LLM_API_KEY` → `CDP_TOKEN` → the workload JWT at `/tmp/jwt` that Cloudera AI injects into every pod. Agents are rebuilt for each evaluation, so a refreshed token is picked up without a restart. Each task's `expected_output` now ends with an explicit "output only the labeled lines" rule, which is what keeps 7–8B instruction models inside the `LABEL: value` format the orchestrator parses. Reasoning-style models that print their chain of thought (e.g. Nemotron Super) break that parsing and are not used.
+
+**OpenSearch modes (`backend/tools/opensearch_conn.py`).** URL, basic auth and TLS are configured in one place, so the client, `main.py` and the index scripts work against three deployments: docker-compose on a laptop, OpenSearch embedded in the Cloudera AI application pod (`deploy/opensearch/embedded.py`: official 2.11 bundle, bundled JDK and k-NN plugin, security plugin disabled, bound to 127.0.0.1), or a Cloudera Data Hub cluster behind Knox. Index data for the embedded mode is kept on pod-local disk (Lucene lock files do not tolerate NFS) and rebuilt at start from `data/catalog_embeddings.jsonl`, the cache written by `scripts/index_catalog.py --embed-only`. Documents are loaded with the `_bulk` API. Engine, space type and thresholds are unchanged, so verdicts match the laptop.
+
+**Iceberg via Impala (`backend/tools/db.py`).** `DB_BACKEND=impala` routes all SQL in `database_client.py` through `impyla` to a Cloudera Data Warehouse (or Data Hub) Impala endpoint using the workload user and password. `backend/data/init_db.py --backend impala` creates `new_item_eval.*` as `STORED BY ICEBERG` tables and seeds them with the same `Random(42)` data as the DuckDB file; `evaluation_history` is an Iceberg table too, so the History tab is backed by the lakehouse. The only dialect differences handled are placeholders (`%s` vs `?`), the reserved word `timestamp` (quoted per backend) and the absence of column defaults on Iceberg (`now()` is written explicitly).
+
+**Bootstrap as Workbench Jobs (`deploy/cml_setup.py`).** Four chained jobs install dependencies (CPU torch wheel, CLIP weights, OpenSearch bundle, Node + frontend build), download the 295 images referenced by the committed `data/catalog_products.json` (`scripts/fetch_images.py`, reproducible unlike the search-API based `download_catalog.py`), compute embeddings, and create the Iceberg tables. Packages live in `~/.local` on project storage and are shared with the Application, which is why jobs and application are pinned to the same Python runtime.
+
+**Verification.** `GET /api/health` reports every dependency; `deploy/check_endpoints.py` tests the AI Inference endpoint (chat + streaming), OpenSearch (health + k-NN plugin) and Impala; `backend/smoke_test.py` takes `API_BASE` so it can run against `deploy/app.py` inside a session.

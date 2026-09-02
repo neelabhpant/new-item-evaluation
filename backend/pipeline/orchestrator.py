@@ -128,6 +128,15 @@ def extract_reasoning(agent_id: str, raw_output: str, raw_data: dict) -> str:
     return _fallback_reasoning(agent_id, raw_data)
 
 
+def _similar_prose(a: str, b: str, threshold: float = 0.8) -> bool:
+    """True when two reasoning strings are (near) duplicates."""
+    if not a or not b:
+        return False
+    import difflib
+
+    return difflib.SequenceMatcher(None, a.lower(), b.lower()).ratio() >= threshold
+
+
 def _fallback_reasoning(agent_id: str, raw_data: dict) -> str:
     """Deterministic reasoning synthesized from the DataPackage when the
     agent's output lacks a parseable REASONING: block."""
@@ -239,6 +248,7 @@ def run_evaluation(
     agent_step_map = {0: 4, 1: 5, 2: 6}
     agent_id_map = {0: "risk", 1: "fin", 2: "synth"}
     task_counter = {"current": 0}
+    seen_reasonings: list[str] = []
 
     def on_task_complete(task_output: Any) -> None:
         idx = task_counter["current"]
@@ -253,6 +263,12 @@ def run_evaluation(
                 task_output.raw = output_raw
 
         reasoning = extract_reasoning(agent_id_map.get(idx, "risk"), output_raw, raw_data)
+        # Small instruction models sometimes echo an earlier agent's REASONING line
+        # verbatim (it is present in their context). Fall back to the deterministic
+        # sentence for this agent rather than showing the same prose three times.
+        if any(_similar_prose(reasoning, prev) for prev in seen_reasonings):
+            reasoning = _fallback_reasoning(agent_id_map.get(idx, "risk"), raw_data)
+        seen_reasonings.append(reasoning)
 
         _send({
             "phase": "reasoning",
@@ -290,6 +306,12 @@ def run_evaluation(
         "message": f"{AGENT_NAMES[0]} is analyzing...",
         "output": None,
     })
+
+    # Fail fast with a clear message when no valid LLM credential exists, instead of
+    # letting CrewAI retry a doomed call (the UI would look stuck).
+    from tools.llm_config import assert_ready
+
+    assert_ready()
 
     crew = create_evaluation_crew(
         raw_data,

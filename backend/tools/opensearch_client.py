@@ -1,9 +1,16 @@
-import os
+"""k-NN search against the product catalog index.
 
-import requests
+Connection details (URL, auth, TLS) come from tools.opensearch_conn so the
+same code talks to OpenSearch embedded in the app pod, a Cloudera Data Hub
+cluster, or a local docker container.
+"""
 
-OPENSEARCH_URL = os.getenv("OPENSEARCH_URL", "http://localhost:9200")
-OPENSEARCH_INDEX = os.getenv("OPENSEARCH_INDEX", "product-catalog")
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from tools.opensearch_conn import get_session, index_url, timeout
 
 
 def _run_knn_query(embedding: list[float], k: int, category: str | None = None) -> list[dict]:
@@ -27,12 +34,7 @@ def _run_knn_query(embedding: list[float], k: int, category: str | None = None) 
         ],
     }
 
-    resp = requests.post(
-        f"{OPENSEARCH_URL}/{OPENSEARCH_INDEX}/_search",
-        json=query,
-        headers={"Content-Type": "application/json"},
-        timeout=10,
-    )
+    resp = get_session().post(index_url("_search"), json=query, timeout=timeout())
     resp.raise_for_status()
 
     hits = resp.json()["hits"]["hits"]
@@ -93,8 +95,7 @@ def group_by_category(products: list[dict]) -> list[dict]:
 
 
 if __name__ == "__main__":
-    from pathlib import Path
-    from embedding_client import generate_embedding
+    from tools.embedding_client import generate_embedding
 
     BASE_DIR = Path(__file__).resolve().parent.parent.parent
     test_image = BASE_DIR / "data" / "images" / "catalog" / "0857777004195.jpg"

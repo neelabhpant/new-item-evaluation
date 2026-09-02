@@ -38,16 +38,26 @@ The final verdict is **not** chosen by an LLM — it is computed by a decision m
 
 - Python 3.11+, FastAPI, uvicorn
 - CrewAI for agent orchestration (sequential)
-- OpenAI GPT-4o-mini for agent reasoning (via CrewAI)
+- Open-weight LLM on Cloudera AI Inference (Llama 3.1 8B) for agent reasoning via CrewAI; OpenAI GPT-4o-mini as the laptop alternative (`LLM_PROVIDER`)
 - React 18 + TypeScript + Vite + Tailwind v4
-- OpenSearch 2.11 (Docker, localhost:9200)
-- DuckDB for synthetic sales / vendor / category data
+- OpenSearch 2.11 (Docker on a laptop; embedded in the Cloudera AI application pod, or a Cloudera Data Hub cluster)
+- Retail tables as Iceberg in the Cloudera Data Lake via Cloudera Data Warehouse Impala (`DB_BACKEND=impala`); DuckDB on a laptop
 - CLIP (ViT-B/32 via open-clip-torch) for multimodal embeddings
 - WebSocket streaming for real-time UI updates
 
 ---
 
-## Getting started
+## Deploy on Cloudera AI
+
+The platform runs end-to-end on Cloudera: a Cloudera AI Workbench Application serves the app, the agents call an open-weight model on Cloudera AI Inference, OpenSearch runs embedded in the application pod (or on a Data Hub cluster), and the retail tables are Iceberg tables queried through Cloudera Data Warehouse Impala. Bootstrap is a chain of four Workbench Jobs.
+
+```bash
+python deploy/cml_setup.py --run     # from a Workbench session: creates jobs + application, starts bootstrap
+```
+
+See [DEPLOY_CLOUDERA.md](DEPLOY_CLOUDERA.md) for configuration, the job chain, and how each Cloudera service is used.
+
+## Getting started (laptop)
 
 ### Prerequisites
 
@@ -59,7 +69,7 @@ The final verdict is **not** chosen by an LLM — it is computed by a decision m
 
 ```bash
 cp .env.example .env
-# edit .env and set OPENAI_API_KEY
+# laptop: set LLM_PROVIDER=openai + OPENAI_API_KEY, OPENSEARCH_MODE=external, DB_BACKEND=duckdb
 ```
 
 ### 2. Start OpenSearch
@@ -82,21 +92,16 @@ pip install -r backend/requirements.txt
 Populates the OpenSearch index and seeds DuckDB. Run after `docker compose up -d` and before starting the backend.
 
 ```bash
-# 1. Download ~200–300 snack products from Open Food Facts
-#    (writes data/images/catalog/*.jpg + data/catalog_products.json)
-python scripts/download_catalog.py
+# 1. Download the 295 catalog images referenced by data/catalog_products.json
+#    (scripts/download_catalog.py + assign_categories.py rebuild the catalog from scratch instead)
+python scripts/fetch_images.py
 
-# 2. Assign categories to each product
-python scripts/assign_categories.py
-
-# 3. Create the OpenSearch index with the knn_vector mapping (dim=512, hnsw, cosinesimil)
-python scripts/create_index.py
-
-# 4. Generate CLIP embeddings and index every product (5–10 min on CPU)
+# 2. Generate CLIP embeddings (cached in data/catalog_embeddings.jsonl) and bulk-load
+#    the product-catalog index (created automatically; dim=512, hnsw, cosinesimil)
 python scripts/index_catalog.py
 
-# 5. Seed DuckDB (products, sales, category benchmarks, vendors)
-python backend/data/init_db.py
+# 3. Seed the retail tables (DuckDB here; --backend impala for Iceberg on Cloudera)
+python backend/data/init_db.py --backend duckdb
 ```
 
 Verify the OpenSearch index is populated:
@@ -117,6 +122,7 @@ cd backend && python -m uvicorn main:app --port 8001
 cd frontend
 npm install
 npm run dev   # http://localhost:5173, proxies /api and /ws to backend:8001
+# or build once (deploy/build_frontend.sh) and let the backend serve frontend/dist itself
 ```
 
 ### 7. Smoke test
@@ -134,8 +140,17 @@ Exercises the full pipeline end-to-end (3 canonical scenarios + follow-up + repl
 
 ```
 .
-├── docker-compose.yml          # OpenSearch container
+├── docker-compose.yml          # OpenSearch container (laptop)
 ├── .env.example                # Template for required env vars
+├── DEPLOY_CLOUDERA.md          # Cloudera AI deployment guide
+├── deploy/
+│   ├── app.py                  # Cloudera AI Application entry (embedded OpenSearch + API + UI)
+│   ├── cml_setup.py            # Creates the Workbench jobs + application via cmlapi
+│   ├── install_deps.py         # Job 01: pip / CLIP weights / OpenSearch bundle / frontend build
+│   ├── bootstrap_embed.py      # Job 03: CLIP embeddings cache (+ remote OpenSearch load)
+│   ├── check_endpoints.py      # Connectivity checks for AI Inference, OpenSearch, Impala
+│   ├── build_frontend.sh       # Node install + npm build without a system Node
+│   └── opensearch/embedded.py  # OpenSearch running inside a Cloudera AI pod
 ├── backend/
 │   ├── main.py                 # FastAPI app + WebSocket endpoints (port 8001)
 │   ├── smoke_test.py
@@ -149,11 +164,14 @@ Exercises the full pipeline end-to-end (3 canonical scenarios + follow-up + repl
 │   │   ├── tasks.py            # Task builders with REASONING: field
 │   │   └── crew.py             # Sequential crew wiring
 │   ├── tools/
+│   │   ├── llm_config.py       # Cloudera AI Inference / OpenAI provider resolution
+│   │   ├── opensearch_conn.py  # OpenSearch URL / auth / TLS (embedded, Data Hub, docker)
 │   │   ├── opensearch_client.py
 │   │   ├── embedding_client.py
+│   │   ├── db.py               # DuckDB or Impala (Iceberg) query backend
 │   │   └── database_client.py
 │   └── data/
-│       └── init_db.py          # Seed DuckDB tables
+│       └── init_db.py          # Seed retail tables (DuckDB or Iceberg via Impala)
 ├── frontend/                   # React + Vite + Tailwind v4
 └── data/
     └── catalog_products.json   # Catalog metadata (consumed by init_db.py)
@@ -179,6 +197,7 @@ GET    /api/products/{sku}                    # Product details
 GET    /api/catalog/summary                   # Category counts
 GET    /api/catalog/products                  # Full catalog listing
 GET    /api/images/{filename}                 # Static product images
+GET    /api/health                            # OpenSearch / Impala / LLM / frontend status
 ```
 
 ---

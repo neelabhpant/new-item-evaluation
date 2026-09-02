@@ -1,6 +1,14 @@
+import os
+from pathlib import Path
+
 import open_clip
 import torch
 from PIL import Image
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+# CLIP weights (~350 MB) are cached here; on Cloudera AI this lives on project
+# storage so application pods never re-download them.
+CLIP_CACHE_DIR = os.getenv("CLIP_CACHE_DIR", str(Path.home() / ".cache" / "clip"))
 
 _model = None
 _preprocess = None
@@ -10,7 +18,9 @@ _tokenizer = None
 def _get_clip():
     global _model, _preprocess, _tokenizer
     if _model is None:
-        _model, _, _preprocess = open_clip.create_model_and_transforms("ViT-B-32", pretrained="openai")
+        _model, _, _preprocess = open_clip.create_model_and_transforms(
+            "ViT-B-32", pretrained="openai", cache_dir=CLIP_CACHE_DIR
+        )
         _tokenizer = open_clip.get_tokenizer("ViT-B-32")
         _model.eval()
     return _model, _preprocess, _tokenizer

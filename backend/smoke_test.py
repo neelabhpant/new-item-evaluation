@@ -10,6 +10,7 @@ Usage (from repo root, backend + frontend must be running):
 """
 import asyncio
 import json
+import os
 import re
 import sys
 import time
@@ -20,10 +21,12 @@ import websockets
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-TEST_IMAGES = BASE_DIR / "data" / "images" / "test"
+TEST_IMAGES = Path(os.getenv("TEST_IMAGES_DIR", str(BASE_DIR / "data" / "images" / "test")))
 
-API_BASE = "http://localhost:8001"
-WS_BASE = "ws://localhost:8001"
+# On Cloudera AI run the stack in a session (python deploy/app.py) and point
+# API_BASE at http://127.0.0.1:$CDSW_APP_PORT; the public app URL sits behind login.
+API_BASE = os.getenv("API_BASE", "http://localhost:8001").rstrip("/")
+WS_BASE = os.getenv("WS_BASE") or ("wss://" if API_BASE.startswith("https://") else "ws://") + API_BASE.split("://", 1)[1]
 
 GREEN = "\033[92m"
 RED = "\033[91m"
