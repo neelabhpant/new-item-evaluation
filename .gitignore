@@ -40,6 +40,9 @@ assets/
 demo/
 docs/
 
-# Project instructions (local only)
-CLAUDE.md
-.claude/
+# Local-only artifacts (handoff deck/video, data exports, scratch files)
+new item evaluation - handoff/
+nie_export/
+nie_profile.md
+data/off-catalog.zip
+test_xgboost.py
