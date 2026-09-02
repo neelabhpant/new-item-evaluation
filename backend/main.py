@@ -322,7 +322,14 @@ def _run_batch(
                 brand="Unknown",
                 send_msg=None,
             )
-            results.append({"index": idx, "name": item["name"], "result": result["result"]})
+            embedding = result.get("data_package", {}).get("embedding")
+            if embedding:
+                batches[batch_id]["embeddings"].append(embedding)
+            results.append({
+                "index": idx,
+                "name": item["name"],
+                "result_preview": result["result"],
+            })
             send({
                 "type": "product_complete",
                 "index": idx,
