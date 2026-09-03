@@ -21,19 +21,41 @@ interface VendorRisk {
   detail: string;
 }
 
+// A SKU is trusted only when it looks like a barcode; any other leading token (e.g. the
+// word "PRODUCT" copied from the prompt, or "") must never be used to match rows.
+function isBarcode(sku: string): boolean {
+  return /^\d{6,}$/.test(sku);
+}
+
+// Drop artefacts a model may leave in front of a product name ("1:", "PRODUCT 2:", "#3").
+function cleanName(name: string): string {
+  return name.replace(/^\s*(?:product\s*)?#?\d{1,3}\s*[:.)-]\s*/i, "").replace(/\*\*/g, "").trim();
+}
+
+function normalizeName(name: string): string {
+  return cleanName(name).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function bulletLines(sectionText: string): string[] {
+  return sectionText
+    .split("\n")
+    .map((l) => l.replace(/\*\*/g, "").trim())
+    .filter((l) => l.startsWith("-"));
+}
+
 function parseCannibalizationDetails(text: string): CannibalizationRow[] {
   const rows: CannibalizationRow[] = [];
   const section = text.match(/CANNIBALIZATION_DETAILS:\s*\n([\s\S]*?)(?=\n[A-Z_]+:|$)/);
   if (!section) return rows;
-  const lines = section[1].split("\n").filter((l) => l.trim().startsWith("-"));
+  const lines = bulletLines(section[1]);
   for (const line of lines) {
     const m = line.match(
       /^-\s*(\S+)\s+(.+?):\s*(\d+)%\s*similar,\s*\$([\d,.]+[KMB]?)\/yr,\s*([\w\s+\-.%]+?),?\s*(\w+)\s*risk,?\s*est\.?\s*\$([\d,.]+[KMB]?)/i
     );
     if (m) {
       rows.push({
-        sku: m[1],
-        name: m[2].trim(),
+        sku: isBarcode(m[1]) ? m[1] : "",
+        name: cleanName(isBarcode(m[1]) ? m[2] : `${m[1]} ${m[2]}`),
         similarity: m[3] + "%",
         revenue: "$" + m[4] + "/yr",
         trend: m[5].trim(),
@@ -48,9 +70,11 @@ function parseCannibalizationDetails(text: string): CannibalizationRow[] {
       const riskM = line.match(/(high|medium|low)\s*risk/i);
       const impactM = line.match(/est\.?\s*\$([\d,]+(?:\.\d+)?[KMB]?)/i);
       if (simM || revM) {
+        const rawSku = nameM?.[1] ?? "";
+        const rawName = nameM?.[2]?.trim() ?? line.replace(/^-\s*/, "").split(":")[0].trim();
         rows.push({
-          sku: nameM?.[1] ?? "",
-          name: nameM?.[2]?.trim() ?? line.replace(/^-\s*/, "").split(":")[0].trim(),
+          sku: isBarcode(rawSku) ? rawSku : "",
+          name: cleanName(isBarcode(rawSku) || !rawSku ? rawName : `${rawSku} ${rawName}`),
           similarity: simM ? simM[1] + "%" : "",
           revenue: revM ? "$" + revM[1] + "/yr" : "",
           trend: trendM ? trendM[1] : "",
@@ -67,16 +91,19 @@ function parseReplacementCandidates(text: string): ReplacementCandidate[] {
   const candidates: ReplacementCandidate[] = [];
   const section = text.match(/REPLACEMENT_CANDIDATES:\s*\n([\s\S]*?)(?=\n[A-Z_]+:|$)/);
   if (!section) return candidates;
-  const lines = section[1].split("\n").filter((l) => l.trim().startsWith("-"));
+  const lines = bulletLines(section[1]);
   for (const line of lines) {
-    if (/NONE/i.test(line)) continue;
+    if (/^-\s*NONE\b/i.test(line)) continue;
     const m = line.match(/REPLACE\s+(\S+)\s+(.+?)\s*\(\$([\d,.]+[KMB]?)\/yr,?\s*(\w+)\)\s*--?\s*Reason:\s*(.*)/i);
     if (m) {
-      candidates.push({ sku: m[1], name: m[2].trim(), revenue: "$" + m[3] + "/yr", reason: m[5].trim() });
+      const sku = isBarcode(m[1]) ? m[1] : "";
+      candidates.push({ sku, name: cleanName(sku ? m[2] : `${m[1]} ${m[2]}`), revenue: "$" + m[3] + "/yr", reason: m[5].trim() });
     } else {
-      const cleaned = line.replace(/^-\s*(REPLACE\s+)?/, "").trim();
-      if (cleaned && !/NONE/i.test(cleaned)) {
-        candidates.push({ sku: "", name: cleaned.split("(")[0].trim(), revenue: "", reason: cleaned });
+      const cleaned = line.replace(/^-\s*(REPLACE\s+)?/i, "").trim();
+      if (cleaned) {
+        const skuM = cleaned.match(/^(\d{6,})\s+/);
+        const namePart = cleaned.replace(/^(\d{6,})\s+/, "").split("(")[0].split(" -- ")[0];
+        candidates.push({ sku: skuM ? skuM[1] : "", name: cleanName(namePart), revenue: "", reason: cleaned });
       }
     }
   }
@@ -102,9 +129,9 @@ function parseVendorRisks(text: string): VendorRisk[] {
   const risks: VendorRisk[] = [];
   const section = text.match(/VENDOR_RISKS:\s*\n([\s\S]*?)(?=\n[A-Z_]+:|$)/);
   if (!section) return risks;
-  const lines = section[1].split("\n").filter((l) => l.trim().startsWith("-"));
+  const lines = bulletLines(section[1]);
   for (const line of lines) {
-    if (/NONE/i.test(line)) continue;
+    if (/^-\s*NONE\b/i.test(line)) continue;
     const m = line.match(/^-\s*(.+?)\s*\((\w+)\):\s*(.*)/);
     if (m) {
       risks.push({ vendor: m[1].trim(), tier: m[2].trim(), detail: m[3].trim() });
@@ -146,7 +173,15 @@ export default function CannibalizationTable({ output }: Props) {
 
   if (rows.length === 0 && replacements.length === 0) return null;
 
-  const replacementSkus = new Set(replacements.map((r) => r.sku));
+  // Match rows to replacement candidates by barcode when both sides have one, otherwise by
+  // normalized product name. An empty or non-barcode token can never mark a row.
+  const replacementSkus = new Set(replacements.map((r) => r.sku).filter(isBarcode));
+  const replacementNames = new Set(replacements.map((r) => normalizeName(r.name)).filter((n) => n.length > 2));
+  const isReplacementRow = (row: CannibalizationRow): boolean => {
+    if (row.sku && replacementSkus.has(row.sku)) return true;
+    if (row.sku && replacementSkus.size > 0) return false;
+    return replacementNames.has(normalizeName(row.name));
+  };
 
   return (
     <div className="space-y-4">
@@ -165,7 +200,7 @@ export default function CannibalizationTable({ output }: Props) {
             </thead>
             <tbody>
               {rows.map((row, i) => {
-                const isReplacement = replacementSkus.has(row.sku);
+                const isReplacement = isReplacementRow(row);
                 return (
                   <tr key={i} className={`border-b border-reasoner-line/60 ${isReplacement ? "bg-amber-50/60" : ""}`}>
                     <td className="py-1.5 pr-2">
@@ -201,7 +236,7 @@ export default function CannibalizationTable({ output }: Props) {
             <div className="space-y-1 mb-2">
               {replacements.map((r, i) => (
                 <div key={i} className="text-xs">
-                  <span className="font-medium text-reasoner-ink">Replace {r.name}</span>
+                  <span className="font-medium text-reasoner-ink">Replace {r.name || r.sku}</span>
                   {r.revenue && <span className="text-reasoner-mute font-mono tabular-nums"> ({r.revenue})</span>}
                   {r.reason && <span className="text-reasoner-body"> · {r.reason}</span>}
                 </div>

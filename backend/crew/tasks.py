@@ -18,7 +18,7 @@ def _format_enriched_products(data_package: dict) -> str:
     lines = []
     for i, p in enumerate(products, 1):
         lines.append(
-            f"PRODUCT {i}: {p['name']} (SKU: {p['sku']})\n"
+            f"SKU {p['sku']} — {p['name']}  [competitor #{i}]\n"
             f"  Similarity: {p['similarity_score']:.0%} | Brand: {p['brand']} | Category: {p['category']}\n"
             f"  Claims: {p.get('claims', 'N/A')}\n"
             f"  Revenue: ${p['annual_revenue']:,.0f}/yr | Units: {p['weekly_units']}/wk | Velocity Rank: #{p['velocity_rank']}\n"
@@ -28,6 +28,14 @@ def _format_enriched_products(data_package: dict) -> str:
             f"| Tier: {p['vendor_relationship_tier']}"
         )
     return "\n\n".join(lines)
+
+
+def _sku_example(data_package: dict) -> tuple[str, str]:
+    """(barcode, name) of the first competitor, used to make output examples concrete."""
+    products = data_package.get("enriched_products", [])
+    if products:
+        return str(products[0].get("sku", "0000000000000")), str(products[0].get("name", "Product name"))
+    return "0000000000000", "Product name"
 
 
 def _format_competing_vendors_summary(data_package: dict) -> str:
@@ -127,6 +135,7 @@ def _format_submission(data_package: dict) -> str:
 
 
 def risk_market_task(agent: Agent, data_package: dict) -> Task:
+    ex_sku, ex_name = _sku_example(data_package)
     is_white_space = data_package["overlap_classification"] == "White Space"
 
     inferred_cat = data_package.get("inferred_category", "")
@@ -173,7 +182,7 @@ def risk_market_task(agent: Agent, data_package: dict) -> Task:
             "Reference at least one specific number AND one specific SKU or brand from the data above. "
             "DO NOT start with 'In analyzing', 'I found that', 'After reviewing', 'The analysis indicates', or 'This evaluation shows'. "
             "DO NOT use phrases like 'the overlap classification', 'a crowded marketplace', 'well-established competition', 'market share'. "
-            "Example of the STYLE only (a different product; never reuse its products, brands or numbers): 'Twenty protein bars already on the shelf, three of them putting up stable $200K-$650K revenue. Adding another bar in that lane splits what KIND and Nature Valley are already earning.']\n"
+            "Example of the STYLE only (a different product; never reuse its products, brands or numbers): 'Fourteen frozen pizzas already on the shelf, three of them putting up stable $150K-$400K revenue. Adding another pepperoni pie in that lane splits what DiGiorno and Red Baron are already earning.']\n"
             "RISK_RATING: LOW\n"
             "OPPORTUNITY_TYPE: [New Category or Category Extension or Niche Play]\n"
             "MARKET_OPPORTUNITY: [1-3 sentence assessment of the market opportunity]\n"
@@ -243,17 +252,18 @@ def risk_market_task(agent: Agent, data_package: dict) -> Task:
             "Reference at least one specific number AND one specific SKU or brand from the data above. "
             "DO NOT start with 'In analyzing', 'I found that', 'After reviewing', 'The analysis indicates', or 'This evaluation shows'. "
             "DO NOT use phrases like 'the overlap classification', 'a crowded marketplace', 'well-established competition', 'market share'. "
-            "Example of the STYLE only (a different product; never reuse its products, brands or numbers): 'Twenty protein bars already on the shelf, three of them putting up stable $200K-$650K revenue. Adding another bar in that lane splits what KIND and Nature Valley are already earning.']\n"
+            "Example of the STYLE only (a different product; never reuse its products, brands or numbers): 'Fourteen frozen pizzas already on the shelf, three of them putting up stable $150K-$400K revenue. Adding another pepperoni pie in that lane splits what DiGiorno and Red Baron are already earning.']\n"
             "RISK_RATING: [LOW or MEDIUM or HIGH]\n"
             "CANNIBALIZATION_DETAILS:\n"
-            "- [SKU] [Product name]: [X]% similar, $[revenue]/yr, [trend], [risk level] risk, est. $[X] at risk\n"
-            "- (one line per competing product)\n"
+            f"- {ex_sku} {ex_name}: [X]% similar, $[revenue]/yr, [trend], [risk level] risk, est. $[X] at risk\n"
+            "- (one line per competing product; start every line with the product's numeric SKU barcode "
+            "exactly as listed above, then the product name -- never write 'PRODUCT 1')\n"
             "UNDERPERFORMERS:\n"
-            "- [SKU] [Product name]: [reason - e.g. declining -5.2% YoY, bottom shelf, clearance]\n"
+            f"- {ex_sku} {ex_name}: [reason - e.g. declining -5.2% YoY, bottom shelf, clearance]\n"
             "- (one line per underperformer, or NONE if all are performing well)\n"
             "REPLACEMENT_CANDIDATES:\n"
-            "- REPLACE [SKU] [Product name] ($[revenue]/yr, [trend]) -- Reason: [why this should be replaced]\n"
-            "- (0-3 candidates, or NONE)\n"
+            f"- REPLACE {ex_sku} {ex_name} ($[revenue]/yr, [trend]) -- Reason: [why this should be replaced]\n"
+            "- (0-3 candidates, or NONE; each line = REPLACE + SKU barcode + product name)\n"
             "REPLACEMENT_PROJECTED_DECLINE: $[X] annual (total projected YoY revenue loss of replaced products -- calculated as each replaced product's revenue x its negative YoY rate. This revenue is being lost by the category regardless.)\n"
             "REPLACEMENT_NEW_PRODUCT_REVENUE: $[X] annual (estimated Year 1 revenue of new product, using comparable velocity x proposed price x 52 weeks, adjusted down 20-30% for new entry. NEVER put $0 here.)\n"
             "REPLACEMENT_NET_INCREMENTAL: [positive or negative] $[X] annual improvement to category health (new product revenue minus projected decline)\n"
@@ -275,6 +285,7 @@ def risk_market_task(agent: Agent, data_package: dict) -> Task:
 
 
 def financial_task(agent: Agent, data_package: dict, context: list[Task]) -> Task:
+    ex_sku, ex_name = _sku_example(data_package)
     is_white_space = data_package["overlap_classification"] == "White Space"
     sub = data_package["submission"]
 
@@ -323,7 +334,7 @@ def financial_task(agent: Agent, data_package: dict, context: list[Task]) -> Tas
             "Reference at least one specific number AND one specific SKU or brand from the data above. "
             "DO NOT start with 'In analyzing', 'I found that', 'After reviewing', 'The analysis indicates', or 'Based on the data'. "
             "DO NOT use phrases like 'the overlap classification', 'market share', 'revenue stream'. "
-            "Example of the STYLE only (a different product; never reuse its products, brands or numbers): 'RXBAR is the closest comparable at 500 units per week and $5.49. I knocked 25% off for new-entry drag and landed on $368K Year 1 expected.']\n"
+            "Example of the STYLE only (a different product; never reuse its products, brands or numbers): 'DiGiorno Rising Crust is the closest comparable at 420 units per week and $6.99. I knocked 25% off for new-entry drag and landed on $114K Year 1 expected.']\n"
             "WEEKLY_UNITS: [X] units/week (expected -- conservative new category estimate)\n"
             "BEST_CASE: $[X] annual revenue\n"
             "EXPECTED: $[X] annual revenue\n"
@@ -382,19 +393,20 @@ def financial_task(agent: Agent, data_package: dict, context: list[Task]) -> Tas
             "Reference at least one specific number AND one specific SKU or brand from the data above. "
             "DO NOT start with 'In analyzing', 'I found that', 'After reviewing', 'The analysis indicates', or 'Based on the data'. "
             "DO NOT use phrases like 'the overlap classification', 'market share', 'revenue stream'. "
-            "Example of the STYLE only (a different product; never reuse its products, brands or numbers): 'RXBAR is the closest comparable at 500 units per week and $5.49. I knocked 25% off for new-entry drag and landed on $368K Year 1 expected.']\n"
+            "Example of the STYLE only (a different product; never reuse its products, brands or numbers): 'DiGiorno Rising Crust is the closest comparable at 420 units per week and $6.99. I knocked 25% off for new-entry drag and landed on $114K Year 1 expected.']\n"
             "WEEKLY_UNITS: [X] units/week (expected)\n"
             "BEST_CASE: $[X] annual revenue\n"
             "EXPECTED: $[X] annual revenue\n"
             "WORST_CASE: $[X] annual revenue\n"
             "MARGIN: [X]%\n"
             "CANNIBALIZATION_BREAKDOWN:\n"
-            "- [SKU] [Product name]: est. -$[X]/yr revenue impact\n"
+            f"- {ex_sku} {ex_name}: est. -$[X]/yr revenue impact\n"
+            "- (start every line with the numeric SKU barcode as listed, then the name; never 'PRODUCT 1')\n"
             "- (one line per affected product)\n"
             "CANNIBALIZATION_OFFSET: $[X] annual (total)\n"
             "NET_INCREMENTAL: $[X] annual (expected scenario)\n"
             "REPLACEMENT_SCENARIO:\n"
-            "- Replace [SKU] [name]: declining at [X]% YoY, projected annual loss -$[X]\n"
+            f"- Replace {ex_sku} {ex_name}: declining at [X]% YoY, projected annual loss -$[X]\n"
             "- (list each replacement with its projected decline)\n"
             "- New product expected: +$[X]/yr\n"
             "- Net incremental category improvement: [positive or negative] $[X]/yr\n"
@@ -447,7 +459,7 @@ def recommendation_task(agent: Agent, data_package: dict, context: list[Task]) -
             "Reference at least one specific number AND one specific SKU or brand from the data above. "
             "DO NOT start with 'In analyzing', 'I found that', 'After reviewing', 'The analysis indicates', or 'Synthesizing the findings'. "
             "DO NOT use phrases like 'the overlap classification', 'a crowded marketplace', 'well-established competition'. "
-            "Example of the STYLE only (a different product; never reuse its products, brands or numbers): 'Three high-performing KIND and Nature Valley SKUs dominate this shelf and none are declining. Without a replacement candidate that moves the category, this does not earn a slot.']\n"
+            "Example of the STYLE only (a different product; never reuse its products, brands or numbers): 'Three high-performing DiGiorno and Red Baron SKUs dominate this shelf and none are declining. Without a replacement candidate that moves the category, this does not earn a slot.']\n"
             f"VERDICT: {predetermined_verdict}\n"
             f"CONFIDENCE: {predetermined_confidence}%\n"
             "REASON_1: [first supporting reason - one sentence using evidence from previous agents]\n"
@@ -499,7 +511,7 @@ def recommendation_task(agent: Agent, data_package: dict, context: list[Task]) -
                 "Reference at least one specific number AND one specific SKU or brand from the data above. "
                 "DO NOT start with 'In analyzing', 'I found that', 'After reviewing', 'The analysis indicates', or 'Synthesizing the findings'. "
                 "DO NOT use phrases like 'the overlap classification', 'a crowded marketplace', 'well-established competition'. "
-                "Example of the STYLE only (a different product; never reuse its products, brands or numbers): 'Three high-performing KIND and Nature Valley SKUs dominate this shelf and none are declining. Without a replacement candidate that moves the category, this does not earn a slot.']\n"
+                "Example of the STYLE only (a different product; never reuse its products, brands or numbers): 'Three high-performing DiGiorno and Red Baron SKUs dominate this shelf and none are declining. Without a replacement candidate that moves the category, this does not earn a slot.']\n"
                 f"VERDICT: DECLINE\n"
                 f"CONFIDENCE: {predetermined_confidence}%\n"
                 "REASON_1: [first reason supporting DECLINE - cite evidence from previous agents]\n"
@@ -520,7 +532,7 @@ def recommendation_task(agent: Agent, data_package: dict, context: list[Task]) -
                 "Reference at least one specific number AND one specific SKU or brand from the data above. "
                 "DO NOT start with 'In analyzing', 'I found that', 'After reviewing', 'The analysis indicates', or 'Synthesizing the findings'. "
                 "DO NOT use phrases like 'the overlap classification', 'a crowded marketplace', 'well-established competition'. "
-                "Example of the STYLE only (a different product; never reuse its products, brands or numbers): 'Three high-performing KIND and Nature Valley SKUs dominate this shelf and none are declining. Without a replacement candidate that moves the category, this does not earn a slot.']\n"
+                "Example of the STYLE only (a different product; never reuse its products, brands or numbers): 'Three high-performing DiGiorno and Red Baron SKUs dominate this shelf and none are declining. Without a replacement candidate that moves the category, this does not earn a slot.']\n"
                 f"VERDICT: MODIFY\n"
                 f"CONFIDENCE: {predetermined_confidence}%\n"
                 "REASON_1: [first reason supporting MODIFY - what needs to change and why]\n"
@@ -529,7 +541,7 @@ def recommendation_task(agent: Agent, data_package: dict, context: list[Task]) -
                 "SUGGESTED_RETAIL: $[X.XX] (adjusted price recommendation)\n"
                 "PLACEMENT: [shelf placement recommendation if modifications are made]\n"
                 "ROLLOUT: [number] stores for limited trial\n"
-                "REPLACE_SKUS: [SKU1 Product Name, SKU2 Product Name] or NONE\n"
+                "REPLACE_SKUS: [SKU barcode + product name, comma-separated, e.g. 0000000000000 Product name] or NONE\n"
                 "REPLACEMENT_NET_IMPACT: [positive or negative] $[X] annual incremental category improvement, or N/A"
             )
         else:
@@ -541,7 +553,7 @@ def recommendation_task(agent: Agent, data_package: dict, context: list[Task]) -
                 "Reference at least one specific number AND one specific SKU or brand from the data above. "
                 "DO NOT start with 'In analyzing', 'I found that', 'After reviewing', 'The analysis indicates', or 'Synthesizing the findings'. "
                 "DO NOT use phrases like 'the overlap classification', 'a crowded marketplace', 'well-established competition'. "
-                "Example of the STYLE only (a different product; never reuse its products, brands or numbers): 'Three high-performing KIND and Nature Valley SKUs dominate this shelf and none are declining. Without a replacement candidate that moves the category, this does not earn a slot.']\n"
+                "Example of the STYLE only (a different product; never reuse its products, brands or numbers): 'Three high-performing DiGiorno and Red Baron SKUs dominate this shelf and none are declining. Without a replacement candidate that moves the category, this does not earn a slot.']\n"
                 f"VERDICT: AUTHORIZE\n"
                 f"CONFIDENCE: {predetermined_confidence}%\n"
                 "REASON_1: [first reason supporting AUTHORIZE - cite evidence from previous agents]\n"
@@ -550,7 +562,7 @@ def recommendation_task(agent: Agent, data_package: dict, context: list[Task]) -
                 "SUGGESTED_RETAIL: $[X.XX]\n"
                 "PLACEMENT: [shelf placement recommendation]\n"
                 "ROLLOUT: [number] stores initially\n"
-                "REPLACE_SKUS: [SKU1 Product Name, SKU2 Product Name] or NONE\n"
+                "REPLACE_SKUS: [SKU barcode + product name, comma-separated, e.g. 0000000000000 Product name] or NONE\n"
                 "REPLACEMENT_NET_IMPACT: [positive or negative] $[X] annual incremental category improvement, or N/A"
             )
 

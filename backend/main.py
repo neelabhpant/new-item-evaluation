@@ -493,7 +493,7 @@ async def latest_evaluation() -> JSONResponse:
             raw_data = cached.get("data_package", {})
             tasks_output = cached.get("tasks_output", [])
             agent_ids = ["risk", "fin", "synth"]
-            reasonings = [
+            reasonings = cached.get("reasonings") or [
                 extract_reasoning(agent_ids[i], tasks_output[i] if i < len(tasks_output) else "", raw_data)
                 for i in range(3)
             ]

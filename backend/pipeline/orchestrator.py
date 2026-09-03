@@ -69,6 +69,149 @@ def _fix_financial_scenarios(output: str, price: float) -> str:
     return output
 
 
+# Agents are shown competitors as "SKU <barcode> — <name> [competitor #N]". Smaller
+# models sometimes refer back to them as "PRODUCT 2" or by name only; the UI and the
+# downstream agents key on the barcode, so references are normalized deterministically.
+_PRODUCT_INDEX_RE = re.compile(r"\b(?:PRODUCT|Product|product|COMPETITOR|Competitor|competitor|ITEM|Item|item)\s*#?\s*(\d{1,3})\b\s*:?")
+_BULLET_PREFIX_RE = re.compile(r"^(-\s*)((?:REPLACE|Replace|replace)\s+)?")
+
+
+def _normalize_product_refs(output: str, products: list[dict]) -> str:
+    """Rewrite bullet lines so every competitor reference starts with its real SKU barcode."""
+    if not output or not products:
+        return output
+    idx_to_sku = {i: str(p.get("sku", "")) for i, p in enumerate(products, 1) if p.get("sku")}
+    skus = [s for s in idx_to_sku.values() if s]
+    names = sorted(
+        ((str(p.get("name", "")).strip(), str(p.get("sku", ""))) for p in products if p.get("name") and p.get("sku")),
+        key=lambda t: len(t[0]), reverse=True,
+    )
+    out_lines = []
+    for line in output.split("\n"):
+        stripped = line.lstrip().replace("**", "")
+        if not stripped.startswith("-"):
+            out_lines.append(line.replace("**", ""))
+            continue
+        # 1. "PRODUCT N" -> barcode of the N-th competitor
+        def _idx(m: re.Match) -> str:
+            sku = idx_to_sku.get(int(m.group(1)))
+            return f"{sku} " if sku else m.group(0)
+        text = _PRODUCT_INDEX_RE.sub(_idx, stripped)
+        # 2. "<barcode>: name" -> "<barcode> name" so the first token is the SKU
+        for sku in skus:
+            text = re.sub(rf"({re.escape(sku)})\s*[:\-]\s*", r"\1 ", text)
+        text = re.sub(r"\s{2,}", " ", text)
+        # 3. bullets that reference a competitor by name only -> prepend its barcode
+        if not any(sku in text for sku in skus):
+            m = _BULLET_PREFIX_RE.match(text)
+            body = text[m.end():] if m else text
+            for name, sku in names:
+                if name and body.lower().startswith(name.lower()):
+                    text = (m.group(0) if m else "") + f"{sku} " + body
+                    break
+        out_lines.append(text)
+    return "\n".join(out_lines)
+
+
+# Replacement candidates are validated against the data the agent was given: a SKU only
+# qualifies when it is declining, on clearance/seasonal status, or bottom-shelf. Small
+# models otherwise nominate healthy SKUs, which would make the "intelligent replacement"
+# story wrong. The projected-decline and net figures are then recomputed deterministically.
+_REPL_SECTION_RE = re.compile(r"(REPLACEMENT_CANDIDATES:[ \t]*\n)(.*?)(?=\n[A-Z_]+:|\Z)", re.S)
+_REPL_BULLET_SKU_RE = re.compile(r"^-\s*(?:REPLACE\s+)?(\d{6,})\b", re.I)
+MAX_REPLACEMENT_CANDIDATES = 3
+
+
+def _qualifies_for_replacement(p: dict) -> bool:
+    try:
+        declining = float(p.get("yoy_growth", 0) or 0) < 0
+    except (TypeError, ValueError):
+        declining = False
+    status = str(p.get("status", "")).lower()
+    shelf = str(p.get("shelf_position", "")).lower()
+    return declining or status in ("clearance", "seasonal") or shelf == "bottom"
+
+
+def _validate_replacement_candidates(output: str, products: list[dict]) -> tuple[str, list[str] | None]:
+    """Keep only qualifying candidates (max 3) and recompute the replacement figures.
+
+    Returns (new_output, kept_skus); kept_skus is None when the output has no
+    REPLACEMENT_CANDIDATES section (white-space path)."""
+    by_sku = {str(p["sku"]): p for p in products if p.get("sku")}
+    m = _REPL_SECTION_RE.search(output or "")
+    if not m or not by_sku:
+        return output, None
+    kept: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for line in m.group(2).split("\n"):
+        line = line.strip()
+        sm = _REPL_BULLET_SKU_RE.match(line)
+        if not sm:
+            continue
+        sku = sm.group(1)
+        if sku in seen or sku not in by_sku:
+            continue
+        seen.add(sku)
+        if _qualifies_for_replacement(by_sku[sku]):
+            kept.append((sku, line))
+    kept.sort(key=lambda t: (float(by_sku[t[0]].get("yoy_growth", 0) or 0), float(by_sku[t[0]].get("annual_revenue", 0) or 0)))
+    kept = kept[:MAX_REPLACEMENT_CANDIDATES]
+    kept_skus = [sku for sku, _ in kept]
+    new_body = "\n".join(line for _, line in kept) if kept else "- NONE"
+    output = output[: m.start(2)] + new_body + output[m.end(2):]
+
+    decline = sum(
+        float(by_sku[s].get("annual_revenue", 0) or 0) * abs(min(0.0, float(by_sku[s].get("yoy_growth", 0) or 0))) / 100
+        for s in kept_skus
+    )
+    new_rev_m = re.search(r"REPLACEMENT_NEW_PRODUCT_REVENUE:\s*\$?([\d,]+(?:\.\d+)?)", output)
+    if kept_skus:
+        output = re.sub(
+            r"REPLACEMENT_PROJECTED_DECLINE:[^\n]*",
+            f"REPLACEMENT_PROJECTED_DECLINE: ${decline:,.0f} annual (each replaced product's revenue x its negative YoY rate)",
+            output,
+        )
+        if new_rev_m:
+            net = float(new_rev_m.group(1).replace(",", "")) - decline
+            output = re.sub(
+                r"REPLACEMENT_NET_INCREMENTAL:[^\n]*",
+                f"REPLACEMENT_NET_INCREMENTAL: {'positive' if net >= 0 else 'negative'} ${abs(net):,.0f} annual "
+                "improvement to category health (new product revenue minus projected decline)",
+                output,
+            )
+    else:
+        output = re.sub(r"REPLACEMENT_PROJECTED_DECLINE:[^\n]*",
+                        "REPLACEMENT_PROJECTED_DECLINE: $0 annual (no qualifying replacement candidates)", output)
+        output = re.sub(r"REPLACEMENT_NET_INCREMENTAL:[^\n]*",
+                        "REPLACEMENT_NET_INCREMENTAL: N/A (no replacement scenario)", output)
+    return output, kept_skus
+
+
+def _drop_unvalidated_replace_bullets(output: str, kept_skus: list[str] | None) -> str:
+    """Remove '- Replace <sku> ...' bullets (financial agent) for SKUs that did not qualify."""
+    if kept_skus is None or not output:
+        return output
+    out = []
+    for line in output.split("\n"):
+        sm = re.match(r"^\s*-\s*Replace\s+(\d{6,})\b", line, re.I)
+        if sm and sm.group(1) not in kept_skus:
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
+def _filter_replace_skus_field(agent3_output: str, kept_skus: list[str] | None, products: list[dict] | None = None) -> str:
+    """Make Agent 3's REPLACE_SKUS the validated candidate list (deterministic and consistent
+    with the risk table); NONE when no candidate qualified."""
+    if kept_skus is None or not agent3_output:
+        return agent3_output
+    m = re.search(r"REPLACE_SKUS:\s*(.+)", agent3_output)
+    if not m:
+        return agent3_output
+    names = {str(p.get("sku")): str(p.get("name", "")).strip() for p in (products or []) if p.get("sku")}
+    value = ", ".join(f"{s} {names.get(s, '')}".strip() for s in kept_skus) if kept_skus else "NONE"
+    return agent3_output[: m.start(1)] + value + agent3_output[m.end(1):]
+
 def _extract_field(text: str, field_name: str) -> str:
     """Extract a labeled field value from Agent 3's structured output."""
     match = re.search(rf"{field_name}:\s*(.+?)(?:\n|$)", text)
@@ -249,6 +392,7 @@ def run_evaluation(
     agent_id_map = {0: "risk", 1: "fin", 2: "synth"}
     task_counter = {"current": 0}
     seen_reasonings: list[str] = []
+    validated: dict[str, list[str] | None] = {"skus": None}
 
     def on_task_complete(task_output: Any) -> None:
         idx = task_counter["current"]
@@ -256,11 +400,18 @@ def run_evaluation(
         agent_name = AGENT_NAMES[idx] if idx < len(AGENT_NAMES) else f"Agent {idx + 1}"
         output_raw = task_output.raw if hasattr(task_output, "raw") else str(task_output)
 
-        # Fix financial scenarios for Agent 2 (Financial Modeler, idx=1)
+        # Normalize competitor references (PRODUCT N / name -> SKU barcode) for every agent,
+        # and fix financial scenarios for Agent 2 (Financial Modeler, idx=1).
+        output_raw = _normalize_product_refs(output_raw, raw_data.get("enriched_products", []))
+        if idx == 0:
+            output_raw, validated["skus"] = _validate_replacement_candidates(
+                output_raw, raw_data.get("enriched_products", [])
+            )
         if idx == 1:
+            output_raw = _drop_unvalidated_replace_bullets(output_raw, validated["skus"])
             output_raw = _fix_financial_scenarios(output_raw, price)
-            if hasattr(task_output, "raw"):
-                task_output.raw = output_raw
+        if hasattr(task_output, "raw"):
+            task_output.raw = output_raw
 
         reasoning = extract_reasoning(agent_id_map.get(idx, "risk"), output_raw, raw_data)
         # Small instruction models sometimes echo an earlier agent's REASONING line
@@ -320,6 +471,8 @@ def run_evaluation(
     result = crew.kickoff()
 
     agent3_output = result.raw if hasattr(result, "raw") else str(result)
+    agent3_output = _normalize_product_refs(agent3_output, raw_data.get("enriched_products", []))
+    agent3_output = _filter_replace_skus_field(agent3_output, validated["skus"], raw_data.get("enriched_products", []))
 
     # Deterministic verdict override -- ALWAYS applied.
     # The LLM synthesizes reasoning but the verdict is not negotiable.
@@ -452,6 +605,8 @@ def run_evaluation(
     return {
         "data_package": raw_data,
         "result": final_output,
+        "reasonings": list(seen_reasonings),
+        "replacement_skus": validated["skus"] or [],
         "tasks_output": [
             t.raw if hasattr(t, "raw") else str(t)
             for t in result.tasks_output
