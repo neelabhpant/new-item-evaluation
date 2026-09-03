@@ -1,14 +1,16 @@
-"""LLM provider resolution: Cloudera AI Inference (CAII) or OpenAI.
+"""LLM provider resolution: Cloudera AI Inference (CAII) or any OpenAI-compatible endpoint.
 
 Every LLM call site (CrewAI agents, follow-up streaming) goes through this module.
 Provider is chosen from environment variables so the same code runs:
 
-  * on Cloudera AI against an open-weight model endpoint (LLM_PROVIDER=caii)
-  * on a laptop against OpenAI (LLM_PROVIDER=openai, the default)
+  * on Cloudera AI against an open-weight model endpoint (LLM_PROVIDER=caii, the default)
+  * on a laptop against any OpenAI-compatible server hosting an open-weight model,
+    e.g. vLLM, Ollama or a NIM container (LLM_PROVIDER=openai_compatible)
 
 Environment variables
 ---------------------
-LLM_PROVIDER      caii | openai  (default: caii if LLM_BASE_URL is set, else openai)
+LLM_PROVIDER      caii | openai_compatible  (default caii; "openai" is accepted as an alias
+                  of openai_compatible for older .env files)
 LLM_BASE_URL      OpenAI-compatible base URL, e.g.
                   https://<caii-domain>/namespaces/serving-default/endpoints/<name>/v1
 LLM_MODEL         model id as reported by <base_url>/models (e.g. meta/llama-3.1-8b-instruct)
@@ -17,8 +19,7 @@ CDP_TOKEN         long-lived Cloudera workload token / Knox API key (second)
 CML_JWT_PATH      path of the JWT file CML injects into pods (default /tmp/jwt)
 LLM_TEMPERATURE   agent temperature (default 0.3)
 LLM_MAX_TOKENS    completion cap; NIM endpoints need an explicit value (default 2048)
-OPENAI_API_KEY    used when provider is openai
-OPENAI_MODEL_NAME legacy model override for the openai provider (default gpt-4o-mini)
+OPENAI_API_KEY    accepted as an alias of LLM_API_KEY for the openai_compatible provider
 """
 
 from __future__ import annotations
@@ -37,9 +38,11 @@ _WARNED_EXPIRY = False
 
 def provider() -> str:
     explicit = os.getenv("LLM_PROVIDER", "").strip().lower()
-    if explicit in ("caii", "openai"):
-        return explicit
-    return "caii" if os.getenv("LLM_BASE_URL") else "openai"
+    if explicit == "caii":
+        return "caii"
+    if explicit in ("openai_compatible", "openai"):
+        return "openai_compatible"
+    return "caii"
 
 
 def jwt_expiry(token: str | None) -> float | None:
@@ -117,7 +120,8 @@ def resolve_api_key() -> str:
 
     Order: LLM_API_KEY > CDP_TOKEN > valid CML_JWT_PATH (/tmp/jwt) >
     valid CML_JWT_FALLBACK_PATH (.secrets/jwt.json on project storage, written by
-    deploy/save_session_token.py) > OPENAI_API_KEY (openai provider only).
+    deploy/save_session_token.py). For openai_compatible, OPENAI_API_KEY is read as an
+    alias of LLM_API_KEY; an endpoint without auth may leave both unset.
     """
     global _WARNED_EXPIRY, _LAST_SOURCE
     for var in ("LLM_API_KEY", "CDP_TOKEN"):
@@ -143,7 +147,7 @@ def resolve_api_key() -> str:
         log.error("LLM_PROVIDER=caii but no valid token: set LLM_API_KEY/CDP_TOKEN, or provide %s / %s",
                   os.getenv("CML_JWT_PATH", "/tmp/jwt"), fallback_token_path())
         return ""
-    _LAST_SOURCE = "OPENAI_API_KEY"
+    _LAST_SOURCE = "OPENAI_API_KEY" if os.getenv("OPENAI_API_KEY") else "none"
     return os.getenv("OPENAI_API_KEY", "")
 
 
@@ -167,12 +171,12 @@ def settings() -> dict:
         if not base_url or not model:
             raise RuntimeError("LLM_PROVIDER=caii requires LLM_BASE_URL and LLM_MODEL")
         return {"provider": prov, "model": model, "base_url": base_url, "api_key": resolve_api_key()}
-    return {
-        "provider": prov,
-        "model": os.getenv("LLM_MODEL") or os.getenv("OPENAI_MODEL_NAME", "gpt-4o-mini"),
-        "base_url": os.getenv("LLM_BASE_URL") or None,
-        "api_key": resolve_api_key(),
-    }
+    base_url = os.getenv("LLM_BASE_URL", "").rstrip("/")
+    model = os.getenv("LLM_MODEL", "")
+    if not base_url or not model:
+        raise RuntimeError("LLM_PROVIDER=openai_compatible requires LLM_BASE_URL and LLM_MODEL "
+                           "(an OpenAI-compatible server such as vLLM, Ollama or NIM)")
+    return {"provider": prov, "model": model, "base_url": base_url, "api_key": resolve_api_key()}
 
 
 def crew_llm():
@@ -181,8 +185,8 @@ def crew_llm():
 
     s = settings()
     # CrewAI/litellm internals occasionally consult OPENAI_API_KEY even when an
-    # explicit api_key is passed; make sure it is populated for the caii case.
-    if s["provider"] == "caii" and s["api_key"]:
+    # explicit api_key is passed; make sure it is populated with the resolved token.
+    if s["api_key"]:
         os.environ["OPENAI_API_KEY"] = s["api_key"]
     kwargs = {
         "model": f"openai/{s['model']}",

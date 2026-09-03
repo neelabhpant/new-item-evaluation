@@ -7,6 +7,9 @@
 Runs inside a Cloudera AI session (uses CDSW_PROJECT_ID / CDSW_APIV2_KEY from the
 environment). Idempotent: existing jobs/applications with the same names are updated.
 
+This is the manual / re-deploy path. The same bootstrap is declared as AMP tasks in
+.project-metadata.yaml at the repository root, which is what "New Project > AMPs" runs.
+
 Project-level environment variables (Project Settings > Advanced) are the source
 of truth for configuration; APP_ENV below only carries non-secret defaults that
 are safe to override there.

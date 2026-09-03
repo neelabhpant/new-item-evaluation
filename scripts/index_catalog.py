@@ -148,7 +148,7 @@ def embed_catalog(force: bool = False) -> list[dict]:
     import torch
     from PIL import Image
 
-    print(f"Loading CLIP model (ViT-B/32, OpenAI weights) from cache dir {CLIP_CACHE_DIR}...")
+    print(f"Loading CLIP model (ViT-B/32, open weights) from cache dir {CLIP_CACHE_DIR}...")
     model, _, preprocess = open_clip.create_model_and_transforms(
         "ViT-B-32", pretrained="openai", cache_dir=CLIP_CACHE_DIR
     )

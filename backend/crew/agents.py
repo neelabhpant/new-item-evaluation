@@ -10,7 +10,7 @@ from tools.llm_config import crew_llm
 
 
 def _llm() -> LLM:
-    """LLM bound to the configured provider (Cloudera AI Inference or OpenAI).
+    """LLM bound to the configured provider (Cloudera AI Inference or any OpenAI-compatible endpoint).
 
     Built fresh per agent / per evaluation so a refreshed workload token is picked up.
     """

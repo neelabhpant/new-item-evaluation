@@ -219,7 +219,7 @@ This is the heaviest bootstrap step. For each product in `data/catalog_products.
 
 **Why not concatenate them into 1024 dims?** Concatenation requires the index to know which half of the vector to weight more, and forces the query vector to have the same layout. Averaging is simpler, preserves the 512-dim search space, and the unit-normalization ensures both modalities contribute equally.
 
-**Time cost:** 5–10 minutes on CPU for ~250 products. Slower the first run because `torch` downloads the ~150 MB CLIP weights to `~/.cache/clip/`.
+**Time cost:** 5 to 10 minutes on CPU for ~295 products. Slower the first run because open-clip downloads the CLIP ViT-B/32 open weights (~350 MB) to `~/.cache/clip/`.
 
 ```bash
 python scripts/index_catalog.py
@@ -457,7 +457,7 @@ return Crew(
 
 `Process.sequential` means tasks run in order. The `context=[task1]` on task2 passes task1's output text into task2's prompt. CrewAI handles the prompt construction; we provide the data.
 
-**LLM:** resolved by `backend/tools/llm_config.py`. On Cloudera AI (`LLM_PROVIDER=caii`) the agents call an open-weight model served by Cloudera AI Inference through its OpenAI-compatible API (validated with Llama 3.1 8B Instruct); on a laptop (`LLM_PROVIDER=openai`) they call OpenAI GPT-4o-mini. CrewAI's `LLM` wrapper is given the base URL, model id and bearer token explicitly.
+**LLM:** resolved by `backend/tools/llm_config.py`. On Cloudera AI (`LLM_PROVIDER=caii`) the agents call an open-weight model served by Cloudera AI Inference through its OpenAI-compatible API (validated with Llama 3.1 8B Instruct); on a laptop (`LLM_PROVIDER=openai_compatible`) they call any OpenAI-compatible server hosting an open-weight model (vLLM, Ollama, NIM). CrewAI's `LLM` wrapper is given the base URL, model id and bearer token explicitly.
 
 ### 6.1 Agent 1: Risk & Market Analyst
 
@@ -781,9 +781,9 @@ For an engineer setting this up from a fresh clone on macOS or Linux.
 
 - Docker Desktop running
 - Python 3.11+
-- Node.js 18+
+- Node.js 22.12+ (Vite 8)
 - ~3 GB free disk (for OpenSearch data, CLIP weights, product images)
-- An OpenAI API key
+- An OpenAI-compatible endpoint serving an open-weight instruct model: a Cloudera AI Inference endpoint, or a local vLLM / Ollama server
 
 ### Step 1: Clone and configure
 
@@ -791,7 +791,8 @@ For an engineer setting this up from a fresh clone on macOS or Linux.
 git clone git@github.com:neelabhpant/new-item-evaluation.git
 cd new-item-evaluation
 cp .env.example .env
-# Edit .env: set OPENAI_API_KEY
+# Edit .env: set LLM_BASE_URL, LLM_MODEL and (if the endpoint needs one) LLM_API_KEY;
+# for a laptop also set OPENSEARCH_MODE=external and DB_BACKEND=duckdb
 ```
 
 ### Step 2: Start OpenSearch
@@ -809,7 +810,7 @@ curl http://localhost:9200
 python -m venv venv
 source venv/bin/activate
 pip install -r backend/requirements.txt
-# First time: torch will download CLIP weights to ~/.cache/clip (~150 MB)
+# First time: open-clip downloads the CLIP ViT-B/32 open weights to ~/.cache/clip (~350 MB)
 ```
 
 ### Step 4: Bootstrap the catalog (one-time, ~10–15 minutes)
@@ -897,8 +898,8 @@ For 295 products, brute force is fine. The HNSW choice future-proofs the system 
 **Why DuckDB instead of Postgres?**
 Zero server, embedded, no Docker needed beyond OpenSearch, fast analytical queries. Perfect for a demo. Production would migrate to Postgres or Snowflake.
 
-**Why CrewAI and not raw OpenAI tool-calling?**
-CrewAI gives us the sequential-process scaffolding and context-passing between tasks for free. The agents could be replicated with raw OpenAI calls but CrewAI removes about 200 lines of prompt-plumbing code.
+**Why CrewAI and not raw chat-completions calls?**
+CrewAI gives us the sequential-process scaffolding and context-passing between tasks for free. The agents could be replicated with raw chat-completions calls but CrewAI removes about 200 lines of prompt-plumbing code.
 
 **Why no tools on the agents?**
 Tool-calling adds 10–30 seconds per call and introduces hallucination risk on tool arguments. We collect all data upfront in 2–3 seconds and inject it as task-description text. Faster and more reliable.
@@ -906,8 +907,8 @@ Tool-calling adds 10–30 seconds per call and introduces hallucination risk on 
 **Why is the verdict deterministic?**
 Buyers need auditable, reproducible decisions. An LLM "deciding" the verdict drifts across runs and is hard to defend in a category review. The matrix is explainable in one slide.
 
-**Why GPT-4o-mini and not GPT-4o?**
-Cost and latency. For structured-output reasoning over pre-collected data, 4o-mini is sufficient. Output quality is gated more by prompt engineering than model size.
+**Why is a 7 to 8B open-weight model enough?**
+The model never decides anything: the verdict, the scenario math and the replacement candidates are computed in Python, and the agents only write prose over pre-collected data in a fixed `LABEL: value` format. Llama 3.1 8B Instruct and Qwen2.5 7B Instruct on Cloudera AI Inference both produce usable output in 20 to 60 seconds per evaluation. Output quality is gated more by prompt engineering than model size.
 
 **Why 86% as the new-category threshold?**
 Empirical, calibrated against the demo catalog. Below 0.86, CLIP matches start to be unreliable for retail-category inference. Above 0.86, the matches are consistently in-category. Tune per catalog.
@@ -919,7 +920,7 @@ LLMs frequently emit scenario values that are mathematically inconsistent (e.g. 
 Demo heuristic. In production, this should be category-specific and informed by shelf-space data. The matrix logic is decoupled from the threshold — changing the cutoff doesn't require touching `compute_verdict()`.
 
 **Can the system run fully offline?**
-No. The OpenAI API is the only external dependency at evaluation time. Everything else (OpenSearch, DuckDB, CLIP model) runs locally. Catalog bootstrap requires internet access for Open Food Facts.
+Almost. At evaluation time the only network calls are to the LLM endpoint (Cloudera AI Inference, or a local OpenAI-compatible server), OpenSearch and Impala or DuckDB; CLIP runs in process. Catalog bootstrap requires internet access for Open Food Facts images, PyPI and the CLIP weights.
 
 **How does follow-up Q&A work?**
 `backend/pipeline/followup.py` looks up the cached DataPackage and the three task outputs from the original evaluation. It constructs a system prompt that includes all that context and the user's question, then streams completion deltas through the openai SDK directly. No CrewAI, no second pipeline run. Scoped: the LLM is instructed to answer only questions about *this product's evaluation*, not start a new analysis.
@@ -935,7 +936,7 @@ The full deployment guide is in [DEPLOY_CLOUDERA.md](DEPLOY_CLOUDERA.md). This s
 
 **LLM provider abstraction (`backend/tools/llm_config.py`).** The two call sites (`crew/agents.py`, `pipeline/followup.py`) ask this module for a CrewAI `LLM` or an `openai.OpenAI` client. For `LLM_PROVIDER=caii` the model string stays `openai/<model>` (litellm's OpenAI-compatible adapter) with `base_url` pointing at the Cloudera AI Inference endpoint. The bearer token is resolved per call: `LLM_API_KEY` → `CDP_TOKEN` → the workload JWT at `/tmp/jwt` that Cloudera AI injects into every pod. Agents are rebuilt for each evaluation, so a refreshed token is picked up without a restart. Each task's `expected_output` now ends with an explicit "output only the labeled lines" rule, which is what keeps 7–8B instruction models inside the `LABEL: value` format the orchestrator parses. Reasoning-style models that print their chain of thought (e.g. Nemotron Super) break that parsing and are not used.
 
-**OpenSearch modes (`backend/tools/opensearch_conn.py`).** URL, basic auth and TLS are configured in one place, so the client, `main.py` and the index scripts work against three deployments: docker-compose on a laptop, OpenSearch embedded in the Cloudera AI application pod (`deploy/opensearch/embedded.py`: official 2.11 bundle, bundled JDK and k-NN plugin, security plugin disabled, bound to 127.0.0.1), or a Cloudera Data Hub cluster behind Knox. Index data for the embedded mode is kept on pod-local disk (Lucene lock files do not tolerate NFS) and rebuilt at start from `data/catalog_embeddings.jsonl`, the cache written by `scripts/index_catalog.py --embed-only`. Documents are loaded with the `_bulk` API. Engine, space type and thresholds are unchanged, so verdicts match the laptop.
+**OpenSearch modes (`backend/tools/opensearch_conn.py`).** URL, basic auth and TLS are configured in one place, so the client, `main.py` and the index scripts work against three deployments: docker-compose on a laptop, OpenSearch embedded in the Cloudera AI application pod (`deploy/opensearch/embedded.py`: official 2.11 bundle, bundled JDK and k-NN plugin, security plugin disabled, bound to 127.0.0.1), or any external OpenSearch 2.x cluster with the k-NN plugin (https, basic auth, private CA). Index data for the embedded mode is kept on pod-local disk (Lucene lock files do not tolerate NFS) and rebuilt at start from `data/catalog_embeddings.jsonl`, the cache written by `scripts/index_catalog.py --embed-only`. Documents are loaded with the `_bulk` API. Engine, space type and thresholds are unchanged, so verdicts match the laptop.
 
 **Iceberg via Impala (`backend/tools/db.py`).** `DB_BACKEND=impala` routes all SQL in `database_client.py` through `impyla` to a Cloudera Data Warehouse (or Data Hub) Impala endpoint using the workload user and password. `backend/data/init_db.py --backend impala` creates `new_item_eval.*` as `STORED BY ICEBERG` tables and seeds them with the same `Random(42)` data as the DuckDB file; `evaluation_history` is an Iceberg table too, so the History tab is backed by the lakehouse. The only dialect differences handled are placeholders (`%s` vs `?`), the reserved word `timestamp` (quoted per backend) and the absence of column defaults on Iceberg (`now()` is written explicitly).
 

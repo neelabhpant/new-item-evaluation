@@ -1,0 +1,194 @@
+name: Multimodal New Item Evaluation for Retail
+description: |
+  Evaluate supplier new product submissions against a retailer's existing assortment.
+  CLIP image and text embeddings with OpenSearch k-NN find look-alike products, Iceberg
+  tables in Cloudera Data Warehouse supply sales and vendor data, and three CrewAI agents
+  on an open-weight model served by Cloudera AI Inference write the risk, financial and
+  recommendation analysis behind a deterministic AUTHORIZE / MODIFY / DECLINE verdict.
+  Requires a running Cloudera AI Inference chat endpoint and an Impala Virtual Warehouse.
+
+author: Cloudera Inc.
+specification_version: 1.0
+prototype_version: 1.0
+date: "2026-09-03"
+
+# One image for the install session, the jobs and the application: pip installs land in
+# ~/.local on project storage and are only complete for the image they were installed from.
+runtimes:
+  - editor: JupyterLab
+    kernel: Python 3.10
+    edition: Standard
+    version: "2026.08"
+
+environment_variables:
+  LLM_PROVIDER:
+    default: "caii"
+    description: "LLM provider. caii = Cloudera AI Inference (default). Any other OpenAI-compatible server: openai_compatible."
+  LLM_BASE_URL:
+    default: ""
+    description: "OpenAI-compatible base URL of a running Cloudera AI Inference chat endpoint, e.g. https://<domain>/namespaces/serving-default/endpoints/<name>/v1 (NIM) or .../openai/v1 (vLLM)."
+    required: true
+  LLM_MODEL:
+    default: "meta/llama-3.1-8b-instruct"
+    description: "Model id reported by <LLM_BASE_URL>/models. Validated: meta/llama-3.1-8b-instruct (NIM), Qwen/Qwen2.5-7B-Instruct (vLLM)."
+    required: true
+  LLM_TEMPERATURE:
+    default: "0.3"
+    description: "Sampling temperature for the agents."
+  LLM_MAX_TOKENS:
+    default: "2048"
+    description: "Completion cap per agent call (NIM endpoints need an explicit value)."
+  CDP_TOKEN:
+    default: ""
+    description: "Optional long-lived workload token / Knox API key for the Application's calls to AI Inference. Recommended: Application pods do not always receive a valid /tmp/jwt. When empty, the token saved from the install session (.secrets/jwt.json) is used."
+  DB_BACKEND:
+    default: "impala"
+    description: "Tabular backend. impala = Iceberg tables via Cloudera Data Warehouse (default). duckdb = local file, laptop only."
+  IMPALA_HOST:
+    default: ""
+    description: "Impala coordinator host of the Virtual Warehouse, from the JDBC URL in Project > Data Connections, e.g. coordinator-<vw>.dw-<env>.cloudera.site"
+    required: true
+  IMPALA_PORT:
+    default: "443"
+    description: "Impala HTTP port."
+  IMPALA_HTTP_PATH:
+    default: "cliservice"
+    description: "Impala HTTP path (Data Hub Impala: <cluster>/cdp-proxy-api/impala)."
+  IMPALA_DATABASE:
+    default: "new_item_eval"
+    description: "Database that holds the five Iceberg tables. Created if missing (needs a Ranger policy) or point at a database you own."
+  OPENSEARCH_MODE:
+    default: "embedded"
+    description: "embedded = OpenSearch 2.11 started inside the application pod (default). external = an existing OpenSearch 2.x cluster with the k-NN plugin (set OPENSEARCH_URL and credentials)."
+  OPENSEARCH_URL:
+    default: "http://127.0.0.1:9200"
+    description: "OpenSearch base URL. Leave the default for embedded mode."
+  OPENSEARCH_USER:
+    default: ""
+    description: "Basic auth user for an external OpenSearch cluster (external mode only)."
+  OPENSEARCH_PASSWORD:
+    default: ""
+    description: "Basic auth password for an external OpenSearch cluster (external mode only)."
+  OPENSEARCH_CA_CERT:
+    default: ""
+    description: "Path to a CA bundle for an https OpenSearch cluster (external mode only)."
+  OPENSEARCH_INDEX:
+    default: "product-catalog"
+    description: "Name of the catalog vector index."
+  OPENSEARCH_VERSION:
+    default: "2.11.0"
+    description: "OpenSearch bundle downloaded for embedded mode."
+  OPENSEARCH_DATA_DIR:
+    default: "/tmp/opensearch-data"
+    description: "Pod-local data directory for embedded OpenSearch (must not be on project storage)."
+  OPENSEARCH_JAVA_OPTS:
+    default: "-Xms1g -Xmx1g"
+    description: "JVM heap for embedded OpenSearch."
+  CLIP_CACHE_DIR:
+    default: "/home/cdsw/.cache/clip"
+    description: "Where the CLIP ViT-B/32 weights are cached on project storage."
+  CML_JWT_FALLBACK_PATH:
+    default: "/home/cdsw/.secrets/jwt.json"
+    description: "Validated workload token written by deploy/save_session_token.py for the Application."
+  CREWAI_TELEMETRY_OPT_OUT:
+    default: "true"
+    description: "Disable CrewAI telemetry."
+  OTEL_SDK_DISABLED:
+    default: "true"
+    description: "Disable OpenTelemetry export."
+
+tasks:
+  - type: run_session
+    name: Install dependencies
+    script: deploy/install_deps.py
+    short_summary: Install Python packages, CLIP weights, the OpenSearch bundle and Node, and build the frontend.
+    long_summary: >-
+      Installs the CPU torch wheel and backend/requirements.txt into ~/.local on project storage,
+      caches the CLIP ViT-B/32 weights, downloads the OpenSearch 2.11 tarball (about 1 GB, embedded
+      mode only), installs Node 22 into ~/.local/node and builds frontend/dist. Needs outbound access
+      to PyPI, download.pytorch.org, openaipublic.azureedge.net, artifacts.opensearch.org and nodejs.org.
+    kernel: python3
+    cpu: 4
+    memory: 8
+
+  - type: create_job
+    name: nie-02-fetch-images
+    entity_label: nie_fetch_images
+    script: scripts/fetch_images.py
+    arguments: None
+    short_summary: Download the 295 catalog product images referenced by data/catalog_products.json.
+    long_summary: >-
+      Fetches each image_front_url from images.openfoodfacts.org into data/images/catalog/<barcode>.jpg.
+      Skips images that already exist, so the job is safe to re-run.
+    kernel: python3
+    cpu: 2
+    memory: 4
+    timeout: 30
+
+  - type: run_job
+    entity_label: nie_fetch_images
+    short_summary: Run the catalog image download.
+
+  - type: create_job
+    name: nie-03-embed-catalog
+    entity_label: nie_embed_catalog
+    script: deploy/bootstrap_embed.py
+    arguments: None
+    short_summary: Compute CLIP embeddings for the catalog.
+    long_summary: >-
+      Writes one combined image + text vector per product to data/catalog_embeddings.jsonl on project
+      storage. In embedded mode the application loads the OpenSearch index from this file at every
+      start; in external mode this job also creates the index and bulk-loads the cluster.
+    kernel: python3
+    cpu: 4
+    memory: 8
+    timeout: 30
+
+  - type: run_job
+    entity_label: nie_embed_catalog
+    short_summary: Run the CLIP embedding job.
+
+  - type: create_job
+    name: nie-04-init-tables
+    entity_label: nie_init_tables
+    script: backend/data/init_db.py
+    arguments: None
+    short_summary: Create and seed the Iceberg tables in Cloudera Data Warehouse.
+    long_summary: >-
+      Creates database IMPALA_DATABASE and the Iceberg tables products, sales_performance,
+      category_benchmarks, vendor_scorecard and evaluation_history through Impala, and seeds them with
+      deterministic synthetic retail data derived from data/catalog_products.json. Uses the project
+      owner's workload password (WORKLOAD_PASSWORD) for LDAP authentication.
+    kernel: python3
+    cpu: 2
+    memory: 4
+    timeout: 15
+
+  - type: run_job
+    entity_label: nie_init_tables
+    short_summary: Run the table creation and seeding job.
+
+  - type: run_session
+    name: Save a workload token for the application
+    script: deploy/save_session_token.py
+    short_summary: Copy this session's valid workload JWT to .secrets/jwt.json for the Application.
+    long_summary: >-
+      Session pods receive a valid workload token at /tmp/jwt; Application pods do not always. The
+      Application falls back to this file when its own token is missing or invalid and CDP_TOKEN is not
+      set. Tokens live about 10 days; re-run this script from a session, or set CDP_TOKEN, to refresh.
+    kernel: python3
+    cpu: 1
+    memory: 2
+
+  - type: start_application
+    name: New Item Evaluation
+    subdomain: new-item-eval
+    script: deploy/app.py
+    short_summary: Start the New Item Evaluation application (embedded OpenSearch + API + UI).
+    long_summary: >-
+      Starts OpenSearch inside the pod, loads the catalog index from the embeddings cache, checks the
+      Impala tables and the AI Inference endpoint, then serves the API and the built frontend on
+      CDSW_APP_PORT. GET /api/health on the application URL reports the state of every dependency.
+    kernel: python3
+    cpu: 4
+    memory: 16

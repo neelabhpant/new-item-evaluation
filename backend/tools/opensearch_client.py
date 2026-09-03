@@ -1,7 +1,7 @@
 """k-NN search against the product catalog index.
 
 Connection details (URL, auth, TLS) come from tools.opensearch_conn so the
-same code talks to OpenSearch embedded in the app pod, a Cloudera Data Hub
+same code talks to OpenSearch embedded in the app pod, an external OpenSearch
 cluster, or a local docker container.
 """
 

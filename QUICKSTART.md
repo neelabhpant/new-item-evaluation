@@ -6,7 +6,7 @@ For Cloudera AI see [DEPLOY_CLOUDERA.md](DEPLOY_CLOUDERA.md).
 
 - Docker running (for OpenSearch)
 - Python 3.11+ with venv
-- Node.js 18+
+- Node.js 22.12+ (Vite 8)
 
 ## Start OpenSearch
 

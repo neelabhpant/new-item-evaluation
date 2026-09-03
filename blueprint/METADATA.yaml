@@ -1,0 +1,67 @@
+# Cloudera Blueprint catalog metadata
+# Populate fields used by the master blueprint website and internal catalog.
+
+# --- Identity ---
+name: "Multimodal New Item Evaluation for Retail"
+slug: "retail-new-item-evaluation"              # URL-safe repo / catalog identifier
+description: "Evaluate supplier product submissions against a retailer's assortment with image and text similarity search, lakehouse sales data and open-weight LLM agents on Cloudera AI."
+reprise_link: "NOT YET PROVIDED"                 # Public reprise link (no Reprise recorded yet)
+
+# --- Classification (website filters) ---
+catalog_classification:
+  - Enterprise Blueprint                     # Options: Enterprise Blueprint | Research | Launchable (AMP) | Developer Example
+  - Launchable (AMP)
+launchable: true                             # .project-metadata.yaml at the repo root drives the AMP launch
+lifecycle_status: Active                     # e.g., Active | Deprecated
+
+# --- Industry & alignment ---
+industry: Retail                             # e.g., General | Telecom | Financial Services | Healthcare & Life Sciences | Retail | Media | Physical AI & Robotics
+industry_alignment: "Vertical"               # Horizontal | Vertical
+target_vertical: "Grocery and CPG merchandising (assortment and new item authorization)"
+
+# --- Tags (website search & browse) ---
+tags:
+  - retail
+  - cpg
+  - assortment
+  - new-item-evaluation
+  - cannibalization
+  - multimodal
+  - clip
+  - vector-search
+  - opensearch
+  - knn
+  - agents
+  - crewai
+  - iceberg
+  - impala
+  - open-weight-llm
+  - llama
+  - qwen
+
+# --- Relationships ---
+product_mapping:                             # Cloudera products used
+  - Cloudera AI Workbench                    # Jobs for bootstrap, Application that serves the API and UI (deploy/cml_setup.py, deploy/app.py)
+  - Cloudera AI Inference Service            # Chat endpoint for the three CrewAI agents and follow-up Q&A (backend/tools/llm_config.py)
+  - Cloudera Data Warehouse                  # Impala Virtual Warehouse; retail tables and evaluation history stored as Iceberg (backend/tools/db.py)
+model_dependencies:                          # Models, embeddings, or external AI services, if any.
+  - meta/llama-3.1-8b-instruct               # NIM endpoint on Cloudera AI Inference; validated default
+  - Qwen/Qwen2.5-7B-Instruct                 # vLLM endpoint on Cloudera AI Inference; validated alternate
+  - CLIP ViT-B/32 (open-clip, open weights)  # image + text embeddings, runs on CPU inside the Application
+  - OpenSearch 2.11 with the k-NN plugin     # embedded single-node process inside the Application pod
+
+# --- Provenance ---
+publisher: cloudera                          # cloudera | partner-name
+source: Internal                             # Internal | Partner | NVIDIA Adaptation | Customer
+
+# --- Repository & assets ---
+public_github_link: "https://github.com/neelabhpant/new-item-evaluation"
+#private_github_link: ""                      # If applicable, original repo during development
+
+# --- Ownership ---
+maintainer_name: "Neelabh Pant"
+
+# --- Dates ---
+date_created: "2026-05-12"                   # first commit
+date_updated: "2026-09-03"
+published_date: "2026-09-03"                 # Published date / last modified

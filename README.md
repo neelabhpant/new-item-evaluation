@@ -38,9 +38,9 @@ The final verdict is **not** chosen by an LLM — it is computed by a decision m
 
 - Python 3.11+, FastAPI, uvicorn
 - CrewAI for agent orchestration (sequential)
-- Open-weight LLM on Cloudera AI Inference (Llama 3.1 8B) for agent reasoning via CrewAI; OpenAI GPT-4o-mini as the laptop alternative (`LLM_PROVIDER`)
-- React 18 + TypeScript + Vite + Tailwind v4
-- OpenSearch 2.11 (Docker on a laptop; embedded in the Cloudera AI application pod, or a Cloudera Data Hub cluster)
+- Open-weight LLM on Cloudera AI Inference (validated: Llama 3.1 8B Instruct on NIM, Qwen2.5 7B Instruct on vLLM) for agent reasoning via CrewAI; on a laptop any OpenAI-compatible server hosting an open-weight model (`LLM_PROVIDER=openai_compatible`)
+- React 19 + TypeScript + Vite 8 + Tailwind v4
+- OpenSearch 2.11 with the k-NN plugin (Docker on a laptop; embedded in the Cloudera AI application pod; or any external OpenSearch 2.x cluster)
 - Retail tables as Iceberg in the Cloudera Data Lake via Cloudera Data Warehouse Impala (`DB_BACKEND=impala`); DuckDB on a laptop
 - CLIP (ViT-B/32 via open-clip-torch) for multimodal embeddings
 - WebSocket streaming for real-time UI updates
@@ -49,27 +49,33 @@ The final verdict is **not** chosen by an LLM — it is computed by a decision m
 
 ## Deploy on Cloudera AI
 
-The platform runs end-to-end on Cloudera: a Cloudera AI Workbench Application serves the app, the agents call an open-weight model on Cloudera AI Inference, OpenSearch runs embedded in the application pod (or on a Data Hub cluster), and the retail tables are Iceberg tables queried through Cloudera Data Warehouse Impala. Bootstrap is a chain of four Workbench Jobs.
+The platform runs end-to-end on Cloudera: a Cloudera AI Workbench Application serves the app, the agents call an open-weight model on Cloudera AI Inference, OpenSearch runs embedded in the application pod, and the retail tables are Iceberg tables queried through Cloudera Data Warehouse Impala.
+
+**As an AMP (recommended):** in a Workbench choose New Project, Initial Setup: AMPs, paste this repository's URL, then Configure Project. [`.project-metadata.yaml`](.project-metadata.yaml) declares the runtime, the prompted environment variables (`LLM_BASE_URL`, `LLM_MODEL`, `IMPALA_HOST`, optional `CDP_TOKEN`), the bootstrap tasks and the application.
+
+**From a session:**
 
 ```bash
-python deploy/cml_setup.py --run     # from a Workbench session: creates jobs + application, starts bootstrap
+python deploy/cml_setup.py --run     # creates jobs + application with cmlapi, starts the bootstrap chain
 ```
 
-See [DEPLOY_CLOUDERA.md](DEPLOY_CLOUDERA.md) for configuration, the job chain, and how each Cloudera service is used.
+See [DEPLOY_CLOUDERA.md](DEPLOY_CLOUDERA.md) for configuration, the job chain, and how each Cloudera service is used. The Cloudera Blueprint submission (catalog metadata and onboarding page) is in [`blueprint/`](blueprint/).
 
 ## Getting started (laptop)
 
 ### Prerequisites
 
 - Docker Desktop (for OpenSearch)
-- Python 3.11+
-- Node.js 18+
+- Python 3.10+
+- Node.js 22.12+ (Vite 8)
+- An OpenAI-compatible server hosting an open-weight instruct model (vLLM, Ollama or a NIM container), or a reachable Cloudera AI Inference endpoint
 
 ### 1. Configure secrets
 
 ```bash
 cp .env.example .env
-# laptop: set LLM_PROVIDER=openai + OPENAI_API_KEY, OPENSEARCH_MODE=external, DB_BACKEND=duckdb
+# laptop: set LLM_PROVIDER=openai_compatible, LLM_BASE_URL, LLM_MODEL (and LLM_API_KEY if needed),
+#         OPENSEARCH_MODE=external, DB_BACKEND=duckdb
 ```
 
 ### 2. Start OpenSearch
@@ -140,6 +146,8 @@ Exercises the full pipeline end-to-end (3 canonical scenarios + follow-up + repl
 
 ```
 .
+├── .project-metadata.yaml      # AMP definition (runtime, env vars, bootstrap tasks, application)
+├── blueprint/                  # Cloudera Blueprint catalog metadata and onboarding page
 ├── docker-compose.yml          # OpenSearch container (laptop)
 ├── .env.example                # Template for required env vars
 ├── DEPLOY_CLOUDERA.md          # Cloudera AI deployment guide
@@ -164,8 +172,8 @@ Exercises the full pipeline end-to-end (3 canonical scenarios + follow-up + repl
 │   │   ├── tasks.py            # Task builders with REASONING: field
 │   │   └── crew.py             # Sequential crew wiring
 │   ├── tools/
-│   │   ├── llm_config.py       # Cloudera AI Inference / OpenAI provider resolution
-│   │   ├── opensearch_conn.py  # OpenSearch URL / auth / TLS (embedded, Data Hub, docker)
+│   │   ├── llm_config.py       # Cloudera AI Inference / OpenAI-compatible provider resolution
+│   │   ├── opensearch_conn.py  # OpenSearch URL / auth / TLS (embedded, external cluster, docker)
 │   │   ├── opensearch_client.py
 │   │   ├── embedding_client.py
 │   │   ├── db.py               # DuckDB or Impala (Iceberg) query backend
@@ -174,7 +182,8 @@ Exercises the full pipeline end-to-end (3 canonical scenarios + follow-up + repl
 │       └── init_db.py          # Seed retail tables (DuckDB or Iceberg via Impala)
 ├── frontend/                   # React + Vite + Tailwind v4
 └── data/
-    └── catalog_products.json   # Catalog metadata (consumed by init_db.py)
+    ├── catalog_products.json   # Catalog metadata (consumed by init_db.py)
+    └── images/test/            # Three test images used by backend/smoke_test.py
 ```
 
 ---
@@ -221,3 +230,11 @@ Computed in `backend/pipeline/orchestrator.py:compute_verdict()`.
 - Agent 2's financial projections are post-processed to enforce Best = Expected × 1.20 and Worst = Expected × 0.70, preventing identical scenario values.
 - Auto-detect category uses similarity-weighted voting across cross-category top-20 results. Threshold `MIN_CATEGORY_SIMILARITY = 0.86` — below that the product is classified as **New Category**.
 - CrewAI agents receive the pre-collected DataPackage as task context. They do **not** call tools, eliminating tool-call latency and failure modes.
+
+---
+
+## Data and license
+
+The catalog is 295 snack products from [Open Food Facts](https://world.openfoodfacts.org). Product metadata in `data/catalog_products.json` is available under the Open Database License (ODbL); product images are downloaded at bootstrap from images.openfoodfacts.org and are under CC BY-SA, so they are not committed here. Sales, margin, vendor and benchmark figures are synthetic (`backend/data/init_db.py`, fixed seed) and describe no real retailer.
+
+Code is licensed under the Apache License 2.0, see [LICENSE](LICENSE).

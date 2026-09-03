@@ -2,14 +2,14 @@
 
 Works unchanged for:
   * OpenSearch embedded in the Cloudera AI Application pod (http://127.0.0.1:9200, no auth)
-  * a Cloudera Data Hub / remote cluster (https, basic auth, private CA)
+  * any external OpenSearch 2.x cluster with the k-NN plugin (https, basic auth, private CA)
   * the laptop docker-compose setup (http://localhost:9200)
 
 Environment variables
 ---------------------
 OPENSEARCH_URL          base URL (default http://localhost:9200)
 OPENSEARCH_INDEX        index name (default product-catalog)
-OPENSEARCH_USER / OPENSEARCH_PASSWORD   basic auth (e.g. Data Hub workload credentials)
+OPENSEARCH_USER / OPENSEARCH_PASSWORD   basic auth for an external cluster
 OPENSEARCH_CA_CERT      path to a CA bundle for https
 OPENSEARCH_VERIFY_SSL   true|false (default true; ignored when OPENSEARCH_CA_CERT is set)
 OPENSEARCH_TIMEOUT      default request timeout in seconds (default 10)

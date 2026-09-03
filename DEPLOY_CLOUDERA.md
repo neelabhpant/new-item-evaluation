@@ -20,7 +20,7 @@ Cloudera AI Workbench project (this repo, on project storage)
       ├─ OpenSearch 2.11 started inside the pod (127.0.0.1:9200), index loaded from the embeddings cache
       ├─ FastAPI + React build on one origin  (/api, /ws, /)
       ├─ CLIP embeds each submission on CPU
-      ├─ k-NN search -> OpenSearch          (OPENSEARCH_URL; Data Hub cluster = config change)
+      ├─ k-NN search -> OpenSearch          (OPENSEARCH_URL; external cluster = config change)
       ├─ sales / vendor / benchmarks        -> Iceberg via CDW Impala (impyla, workload credentials)
       └─ 3 CrewAI agents + follow-up Q&A    -> Cloudera AI Inference endpoint (OpenAI-compatible)
                                               auth = workload JWT injected at /tmp/jwt
@@ -72,7 +72,23 @@ endpoint's page in the AI Inference UI and strip `/chat/completions`.
 
 ## 3. Bootstrap and deploy
 
-From a Workbench session (Python 3.10 or 3.11, PBJ Workbench or JupyterLab):
+### As an AMP
+
+`.project-metadata.yaml` at the repository root declares the same bootstrap as AMP tasks:
+one install session (`deploy/install_deps.py`), three jobs (`scripts/fetch_images.py`,
+`deploy/bootstrap_embed.py`, `backend/data/init_db.py`), one session that saves a workload
+token for the Application (`deploy/save_session_token.py`), and the Application itself
+(`deploy/app.py`, 4 vCPU / 16 GB). In a Workbench choose **New Project > Initial Setup: AMPs**,
+paste the repository URL, then **Configure Project**: the environment variables of section 2
+are prompted there with their defaults (`LLM_BASE_URL`, `LLM_MODEL` and `IMPALA_HOST` are
+required; `CDP_TOKEN` is optional but recommended). The AMP spec has no job schedule, so the
+6-hourly token refresh job below exists only on the manual path; with an AMP either set
+`CDP_TOKEN` or re-run `deploy/save_session_token.py` from a session before the token expires.
+Admins can also add the repository to a custom AMP catalog (Site Administration > AMPs).
+
+### From a session
+
+From a Workbench session (Python 3.10, JupyterLab runtime, the same image as the application):
 
 ```bash
 python deploy/cml_setup.py --run      # creates the 4 jobs + the application and starts job 01
@@ -136,12 +152,13 @@ models changes narrative quality, never the decision.
   starts it inside the application pod on `127.0.0.1:9200` with the security plugin
   disabled. Index data lives on the pod's local disk and is reloaded from
   `data/catalog_embeddings.jsonl` at every start (seconds; no CLIP needed).
-* **External / Cloudera Data Hub** — set `OPENSEARCH_MODE=external`, `OPENSEARCH_URL`
-  (the Knox-proxied endpoint), `OPENSEARCH_USER` / `OPENSEARCH_PASSWORD` (workload
-  credentials) and `OPENSEARCH_CA_CERT`, then re-run job `nie-03-embed-catalog` which
+* **External cluster** (not validated in the reference workspace): set `OPENSEARCH_MODE=external`,
+  `OPENSEARCH_URL`, `OPENSEARCH_USER` / `OPENSEARCH_PASSWORD` and `OPENSEARCH_CA_CERT` for any
+  OpenSearch 2.x cluster with the k-NN plugin, then re-run job `nie-03-embed-catalog` which
   creates the index and bulk-loads it. The index mapping (`knn_vector`, 512 dims, HNSW,
   cosine, Lucene engine) and the similarity thresholds are unchanged, so verdicts stay
-  identical as long as the cluster is OpenSearch 2.x with the k-NN plugin.
+  identical. Cloudera does not ship OpenSearch as a service; the embedded mode is the
+  self-contained default and the external mode is for a customer-managed cluster.
 
 ### Iceberg tables via Cloudera Data Warehouse (retail data)
 `backend/data/init_db.py --backend impala` creates database `new_item_eval` and five
@@ -195,6 +212,6 @@ entry scripts in `deploy/` and `scripts/`:
 | First Impala query takes minutes | The Virtual Warehouse was suspended; it auto-resumes |
 | Impala permission error on `CREATE DATABASE` | Ask the CDP admin for a Ranger policy on `new_item_eval`, or point `IMPALA_DATABASE` at a database you own |
 | Application restart shows an empty catalog | `data/catalog_embeddings.jsonl` missing: re-run job `nie-03-embed-catalog` |
-| Switching to a Data Hub OpenSearch | see "External / Cloudera Data Hub" above |
+| Switching to an external OpenSearch cluster | see "External cluster" above |
 | Need to check whether Applications launch at all | create a throwaway Application with the stdlib-only `deploy/probe_app.py`; it writes `logs/probe.log` and serves "probe ok" |
-| Running on premises | identical layout: Cloudera AI Inference endpoint URL, Impala host and workload credentials change; OpenSearch stays embedded or moves to a Data Hub cluster |
+| Running on premises | identical layout: Cloudera AI Inference endpoint URL, Impala host and workload credentials change; OpenSearch stays embedded or moves to a customer-managed cluster |

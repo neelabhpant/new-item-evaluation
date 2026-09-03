@@ -1,6 +1,11 @@
 # torch + torchvision are installed first by deploy/install_deps.py from the CPU wheel index
 # (pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu); a plain
 # `pip install torch` pulls ~2.5 GB of CUDA wheels and a mismatched torchvision.
+#
+# Versions validated on Cloudera AI (Python 3.10, 2026-09-03): fastapi 0.141.1, uvicorn 0.52.4,
+# websockets 16.1.1, requests 2.34.2, numpy 1.26.4, duckdb 1.5.5, impyla 0.22.0, openai 2.54.0,
+# crewai 1.15.18, torch 2.14.0+cpu, torchvision 0.29.0+cpu, pillow 12.3.0.
+# `openai` is the client library used for every OpenAI-compatible endpoint, including Cloudera AI Inference.
 fastapi
 uvicorn[standard]
 websockets
@@ -11,6 +16,5 @@ duckdb
 impyla
 openai
 crewai
-crewai-tools
 open-clip-torch
 pillow
