@@ -61,5 +61,5 @@ data/catalog_embeddings.jsonl
 # Workload token copied for the Application (deploy/save_session_token.py)
 .secrets/
 
-# Internal catalog sheet (not for the public repo)
-blueprint/*.xlsx
+# Blueprint submission folder (internal catalog material, not for the public repo)
+blueprint/
