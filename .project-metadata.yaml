@@ -26,11 +26,11 @@ environment_variables:
     description: "LLM provider. caii = Cloudera AI Inference (default). Any other OpenAI-compatible server: openai_compatible."
   LLM_BASE_URL:
     default: ""
-    description: "OpenAI-compatible base URL of a running Cloudera AI Inference chat endpoint, e.g. https://<domain>/namespaces/serving-default/endpoints/<name>/v1 (NIM) or .../openai/v1 (vLLM)."
+    description: "OpenAI-compatible base URL of a running Cloudera AI Inference chat endpoint, e.g. https://DOMAIN/namespaces/serving-default/endpoints/ENDPOINT/v1 for NIM, or .../openai/v1 for vLLM."
     required: true
   LLM_MODEL:
     default: "meta/llama-3.1-8b-instruct"
-    description: "Model id reported by <LLM_BASE_URL>/models. Validated: meta/llama-3.1-8b-instruct (NIM), Qwen/Qwen2.5-7B-Instruct (vLLM)."
+    description: "Model id reported by the endpoint's /models route. Validated: meta/llama-3.1-8b-instruct (NIM), Qwen/Qwen2.5-7B-Instruct (vLLM)."
     required: true
   LLM_TEMPERATURE:
     default: "0.3"
@@ -46,14 +46,14 @@ environment_variables:
     description: "Tabular backend. impala = Iceberg tables via Cloudera Data Warehouse (default). duckdb = local file, laptop only."
   IMPALA_HOST:
     default: ""
-    description: "Impala coordinator host of the Virtual Warehouse, from the JDBC URL in Project > Data Connections, e.g. coordinator-<vw>.dw-<env>.cloudera.site"
+    description: "Impala coordinator host of the Virtual Warehouse, from the JDBC URL in Project > Data Connections, e.g. coordinator-WAREHOUSE.dw-ENV.cloudera.site"
     required: true
   IMPALA_PORT:
     default: "443"
     description: "Impala HTTP port."
   IMPALA_HTTP_PATH:
     default: "cliservice"
-    description: "Impala HTTP path (Data Hub Impala: <cluster>/cdp-proxy-api/impala)."
+    description: "Impala HTTP path (Data Hub Impala: CLUSTER/cdp-proxy-api/impala)."
   IMPALA_DATABASE:
     default: "new_item_eval"
     description: "Database that holds the five Iceberg tables. Created if missing (needs a Ranger policy) or point at a database you own."
