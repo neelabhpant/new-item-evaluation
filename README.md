@@ -59,7 +59,7 @@ The platform runs end-to-end on Cloudera: a Cloudera AI Workbench Application se
 python deploy/cml_setup.py --run     # creates jobs + application with cmlapi, starts the bootstrap chain
 ```
 
-See [DEPLOY_CLOUDERA.md](DEPLOY_CLOUDERA.md) for configuration, the job chain, and how each Cloudera service is used. The Cloudera Blueprint submission (catalog metadata and onboarding page) is in [`blueprint/`](blueprint/).
+See [DEPLOY_CLOUDERA.md](DEPLOY_CLOUDERA.md) for configuration, the job chain, and how each Cloudera service is used.
 
 ## Getting started (laptop)
 
@@ -147,7 +147,6 @@ Exercises the full pipeline end-to-end (3 canonical scenarios + follow-up + repl
 ```
 .
 ├── .project-metadata.yaml      # AMP definition (runtime, env vars, bootstrap tasks, application)
-├── blueprint/                  # Cloudera Blueprint catalog metadata and onboarding page
 ├── docker-compose.yml          # OpenSearch container (laptop)
 ├── .env.example                # Template for required env vars
 ├── DEPLOY_CLOUDERA.md          # Cloudera AI deployment guide
