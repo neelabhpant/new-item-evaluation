@@ -35,8 +35,17 @@ def _token() -> str:
             return os.environ[var]
     try:
         raw = open(os.getenv("CML_JWT_PATH", "/tmp/jwt")).read().strip()
-        return json.loads(raw).get("access_token", "") if raw.startswith("{") else raw
+        tok = json.loads(raw).get("access_token", "") if raw.startswith("{") else raw
+        if tok and tok.count(".") == 2:
+            return tok
     except (OSError, ValueError):
+        pass
+    try:
+        import cml.data_v1 as cmldata  # Cloudera AI runtime library
+
+        tok = cmldata.get_jwt()
+        return tok.get("access_token", "") if isinstance(tok, dict) else str(tok)
+    except Exception:
         return ""
 
 

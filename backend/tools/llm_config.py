@@ -16,7 +16,9 @@ LLM_BASE_URL      OpenAI-compatible base URL, e.g.
 LLM_MODEL         model id as reported by <base_url>/models (e.g. meta/llama-3.1-8b-instruct)
 LLM_API_KEY       explicit bearer token (highest precedence)
 CDP_TOKEN         long-lived Cloudera workload token / Knox API key (second)
-CML_JWT_PATH      path of the JWT file CML injects into pods (default /tmp/jwt)
+CML_JWT_PATH      path of the JWT file CML injects into pods (default /tmp/jwt); when that
+                  file is missing or invalid, a fresh workload token is requested through the
+                  runtime library cml.data_v1.get_jwt() (available in every Cloudera AI pod)
 LLM_TEMPERATURE   agent temperature (default 0.3)
 LLM_MAX_TOKENS    completion cap; NIM endpoints need an explicit value (default 2048)
 OPENAI_API_KEY    accepted as an alias of LLM_API_KEY for the openai_compatible provider
@@ -106,6 +108,31 @@ def _read_cml_jwt() -> str | None:
     return _read_token_file(Path(os.getenv("CML_JWT_PATH", "/tmp/jwt")))
 
 
+_DATA_JWT: dict = {"token": None, "exp": 0.0}
+
+
+def _read_runtime_jwt() -> str | None:
+    """Workload token from the Cloudera AI runtime library (cml.data_v1.get_jwt()).
+
+    Works in session, job and application pods regardless of the state of /tmp/jwt.
+    Cached until an hour before expiry so the API is not called on every LLM request.
+    """
+    if _DATA_JWT["token"] and _DATA_JWT["exp"] - time.time() > 3600:
+        return _DATA_JWT["token"]
+    try:
+        import cml.data_v1 as cmldata  # provided by the Cloudera AI runtime, not on PyPI
+
+        tok = cmldata.get_jwt()
+        tok = tok.get("access_token") if isinstance(tok, dict) else tok
+    except Exception as e:  # not on Cloudera AI, or the call failed
+        log.debug("cml.data_v1.get_jwt() unavailable: %s", e)
+        return None
+    if not _looks_like_jwt(tok):
+        return None
+    _DATA_JWT.update(token=tok, exp=jwt_expiry(tok) or 0.0)
+    return tok
+
+
 def fallback_token_path() -> Path:
     default = Path(__file__).resolve().parents[2] / ".secrets" / "jwt.json"
     return Path(os.getenv("CML_JWT_FALLBACK_PATH", str(default)))
@@ -118,7 +145,7 @@ def _read_fallback_jwt() -> str | None:
 def resolve_api_key() -> str:
     """Bearer token for the LLM endpoint, checked on every call.
 
-    Order: LLM_API_KEY > CDP_TOKEN > valid CML_JWT_PATH (/tmp/jwt) >
+    Order: LLM_API_KEY > CDP_TOKEN > valid CML_JWT_PATH (/tmp/jwt) > cml.data_v1.get_jwt() >
     valid CML_JWT_FALLBACK_PATH (.secrets/jwt.json on project storage, written by
     deploy/save_session_token.py). For openai_compatible, OPENAI_API_KEY is read as an
     alias of LLM_API_KEY; an endpoint without auth may leave both unset.
@@ -132,6 +159,8 @@ def resolve_api_key() -> str:
     if provider() == "caii":
         tok, source = _read_cml_jwt(), "cml_jwt"
         if not tok:
+            tok, source = _read_runtime_jwt(), "cml_data_v1"
+        if not tok:
             tok, source = _read_fallback_jwt(), "fallback_file"
         if tok:
             _LAST_SOURCE = source
@@ -144,7 +173,8 @@ def resolve_api_key() -> str:
                                 "deploy/save_session_token.py or set CDP_TOKEN", source, remaining_h)
             return tok
         _LAST_SOURCE = "none"
-        log.error("LLM_PROVIDER=caii but no valid token: set LLM_API_KEY/CDP_TOKEN, or provide %s / %s",
+        log.error("LLM_PROVIDER=caii but no valid token: set LLM_API_KEY/CDP_TOKEN, or provide %s / %s "
+                  "(cml.data_v1.get_jwt() also returned nothing)",
                   os.getenv("CML_JWT_PATH", "/tmp/jwt"), fallback_token_path())
         return ""
     _LAST_SOURCE = "OPENAI_API_KEY" if os.getenv("OPENAI_API_KEY") else "none"
@@ -157,7 +187,8 @@ def assert_ready() -> None:
     if not s["api_key"]:
         raise RuntimeError(
             "No valid Cloudera workload token for the LLM endpoint. The pod's /tmp/jwt is missing or "
-            f"invalid and {fallback_token_path()} is absent/expired. From a Workbench session run "
+            f"invalid, cml.data_v1.get_jwt() returned nothing, and {fallback_token_path()} is absent/expired. "
+            "From a Workbench session run "
             "`python deploy/save_session_token.py` (or set CDP_TOKEN), then retry."
         )
 

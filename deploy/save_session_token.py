@@ -7,9 +7,11 @@ Run this from a Workbench session (or as the scheduled job nie-05-refresh-token)
 
     python deploy/save_session_token.py
 
-It only overwrites the fallback file when this pod's token is valid, and never
-replaces a valid file with an invalid/older one. Tokens live ~10 days; /api/health
-shows the remaining lifetime.
+The token comes from /tmp/jwt when that file is valid, otherwise from the runtime
+library cml.data_v1.get_jwt(). It only overwrites the fallback file with a token
+that expires later than the existing one. Tokens live ~10 days; /api/health shows
+the remaining lifetime. The script never exits non-zero for a missing token, so an
+AMP launch is not blocked by it; the application resolves tokens on its own too.
 """
 
 import json
@@ -34,7 +36,7 @@ def _repo_root() -> Path:
 REPO_ROOT = _repo_root()
 sys.path.insert(0, str(REPO_ROOT / "backend"))
 
-from tools.llm_config import _read_token_file, fallback_token_path, jwt_expiry  # noqa: E402
+from tools.llm_config import _read_runtime_jwt, _read_token_file, fallback_token_path, jwt_expiry  # noqa: E402
 
 
 def _note(msg: str) -> None:
@@ -52,10 +54,14 @@ def _note(msg: str) -> None:
 def main() -> int:
     src = Path(os.getenv("CML_JWT_PATH", "/tmp/jwt"))
     dest = fallback_token_path()
-    token = _read_token_file(src)
+    token, origin = _read_token_file(src), str(src)
     if not token:
-        _note(f"{src} has no valid token in this pod; nothing written (existing {dest} kept).")
-        return 1
+        token, origin = _read_runtime_jwt(), "cml.data_v1.get_jwt()"
+    if not token:
+        _note(f"WARNING: neither {src} nor cml.data_v1.get_jwt() yielded a valid token in this pod; "
+              f"nothing written (existing {dest} kept). The application will still try /tmp/jwt, "
+              "cml.data_v1.get_jwt() and CDP_TOKEN itself.")
+        return 0  # best effort: never block an AMP launch on this step
     exp_new = jwt_expiry(token) or 0
     existing = _read_token_file(dest) if dest.exists() else None
     if existing and (jwt_expiry(existing) or 0) >= exp_new:
@@ -67,7 +73,7 @@ def main() -> int:
     tmp.write_text(json.dumps({"access_token": token, "token_type": "Bearer", "saved_at": time.time()}))
     os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
     tmp.replace(dest)
-    _note(f"Saved workload token to {dest}; expires {time.strftime('%Y-%m-%d %H:%M', time.gmtime(exp_new))} UTC "
+    _note(f"Saved workload token from {origin} to {dest}; expires {time.strftime('%Y-%m-%d %H:%M', time.gmtime(exp_new))} UTC "
           f"({(exp_new - time.time()) / 3600:.0f} h). Running applications pick it up on their next LLM call.")
     return 0
 

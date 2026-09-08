@@ -183,11 +183,12 @@ tasks:
   - type: run_session
     name: Save a workload token for the application
     script: deploy/save_session_token.py
-    short_summary: Copy this session's valid workload JWT to .secrets/jwt.json for the Application.
+    short_summary: Save a workload token to .secrets/jwt.json for the Application (best effort).
     long_summary: >-
-      Session pods receive a valid workload token at /tmp/jwt; Application pods do not always. The
-      Application falls back to this file when its own token is missing or invalid and CDP_TOKEN is not
-      set. Tokens live about 10 days; re-run this script from a session, or set CDP_TOKEN, to refresh.
+      Copies a valid workload token (from /tmp/jwt, or from the runtime library cml.data_v1.get_jwt())
+      to project storage as a fallback for the Application. The Application resolves tokens the same way
+      on its own, so this step only warns, never fails, when no token is available. Tokens live about
+      10 days; set CDP_TOKEN for a long-running deployment.
     kernel: python3
     cpu: 1
     memory: 2

@@ -135,8 +135,9 @@ Impala row count, LLM provider/model and token expiry, frontend build, image cou
 for the three agents and an `openai.OpenAI(base_url=..., api_key=...)` client for the
 streaming follow-up. The bearer token is resolved on every call in this order:
 `LLM_API_KEY` → `CDP_TOKEN` → `/tmp/jwt` (the workload JWT Cloudera AI injects into pods)
-→ `CML_JWT_FALLBACK_PATH` (default `.secrets/jwt.json` on project storage). Every file is
-validated as an unexpired JWT before use: in this workspace the **Application** pod's
+→ `cml.data_v1.get_jwt()` (the runtime library issues a fresh 10-day workload token in any
+session, job or application pod) → `CML_JWT_FALLBACK_PATH` (default `.secrets/jwt.json` on
+project storage). Every file is validated as an unexpired JWT before use: in this workspace the **Application** pod's
 `/tmp/jwt` contained a Knox 404 HTML page, while session and job pods get a real token.
 `deploy/save_session_token.py` copies a valid token to the fallback file (run it from a
 session, or let the scheduled job `nie-05-refresh-token` do it every 6 hours); tokens
@@ -211,7 +212,7 @@ entry scripts in `deploy/` and `scripts/`:
 
 | Situation | What to do |
 |---|---|
-| LLM calls fail with 401, or the first agent stage errors with "No valid Cloudera workload token" | Token expired/invalid: run `python deploy/save_session_token.py` from a session (or the `nie-05-refresh-token` job), or set `CDP_TOKEN` |
+| LLM calls fail with 401, or the first agent stage errors with "No valid Cloudera workload token" | `/api/health` shows `token_source`; the app tries `/tmp/jwt`, then `cml.data_v1.get_jwt()`, then the fallback file. Run `python deploy/save_session_token.py` from a session, or set `CDP_TOKEN` |
 | App log shows `Illegal header value b'Bearer <html>` / `Connection error` | The pod's `/tmp/jwt` is an HTML error page; the validated fallback file above fixes it |
 | LLM calls fail with 404 / connection error | Endpoint stopped or URL wrong: `python deploy/check_endpoints.py --list` |
 | First Impala query takes minutes | The Virtual Warehouse was suspended; it auto-resumes |
