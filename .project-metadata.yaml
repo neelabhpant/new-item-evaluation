@@ -26,8 +26,7 @@ environment_variables:
     description: "LLM provider. caii = Cloudera AI Inference (default). Any other OpenAI-compatible server: openai_compatible."
   LLM_BASE_URL:
     default: ""
-    description: "OpenAI-compatible base URL of a running Cloudera AI Inference chat endpoint, e.g. https://DOMAIN/namespaces/serving-default/endpoints/ENDPOINT/v1 for NIM, or .../openai/v1 for vLLM."
-    required: true
+    description: "REQUIRED. OpenAI-compatible base URL of a running Cloudera AI Inference chat endpoint, e.g. https://DOMAIN/namespaces/serving-default/endpoints/ENDPOINT/v1 for NIM, or .../openai/v1 for vLLM. The first AMP step fails if this is left empty."
   LLM_MODEL:
     default: "meta/llama-3.1-8b-instruct"
     description: "Model id reported by the endpoint's /models route. Validated: meta/llama-3.1-8b-instruct (NIM), Qwen/Qwen2.5-7B-Instruct (vLLM)."
@@ -46,8 +45,7 @@ environment_variables:
     description: "Tabular backend. impala = Iceberg tables via Cloudera Data Warehouse (default). duckdb = local file, laptop only."
   IMPALA_HOST:
     default: ""
-    description: "Impala coordinator host of the Virtual Warehouse, from the JDBC URL in Project > Data Connections, e.g. coordinator-WAREHOUSE.dw-ENV.cloudera.site"
-    required: true
+    description: "REQUIRED. Impala coordinator host of the Virtual Warehouse, the host part of its JDBC URL in Cloudera Data Warehouse, e.g. coordinator-WAREHOUSE.dw-ENV.cloudera.site. The first AMP step fails if this is left empty."
   IMPALA_PORT:
     default: "443"
     description: "Impala HTTP port."
@@ -98,6 +96,18 @@ environment_variables:
     description: "Disable OpenTelemetry export."
 
 tasks:
+  - type: run_session
+    name: Check configuration
+    script: deploy/check_config.py
+    short_summary: Verify that LLM_BASE_URL, LLM_MODEL and IMPALA_HOST are set before installing anything.
+    long_summary: >-
+      Fails within seconds when a required value was left empty on the Configure Project page,
+      and warns when the AI Inference endpoint or the Impala warehouse cannot be reached yet.
+      Fix the values under Project Settings > Advanced > Environment Variables and relaunch.
+    kernel: python3
+    cpu: 1
+    memory: 2
+
   - type: run_session
     name: Install dependencies
     script: deploy/install_deps.py

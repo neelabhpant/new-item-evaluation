@@ -75,7 +75,8 @@ endpoint's page in the AI Inference UI and strip `/chat/completions`.
 ### As an AMP
 
 `.project-metadata.yaml` at the repository root declares the same bootstrap as AMP tasks:
-one install session (`deploy/install_deps.py`), three jobs (`scripts/fetch_images.py`,
+a configuration check (`deploy/check_config.py`, fails in seconds if `LLM_BASE_URL`, `LLM_MODEL`
+or `IMPALA_HOST` is empty), one install session (`deploy/install_deps.py`), three jobs (`scripts/fetch_images.py`,
 `deploy/bootstrap_embed.py`, `backend/data/init_db.py`), one session that saves a workload
 token for the Application (`deploy/save_session_token.py`), and the Application itself
 (`deploy/app.py`, 4 vCPU / 16 GB). In a Workbench choose **New Project > Initial Setup: AMPs**,
