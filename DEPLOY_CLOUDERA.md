@@ -76,16 +76,17 @@ endpoint's page in the AI Inference UI and strip `/chat/completions`.
 
 `.project-metadata.yaml` at the repository root declares the same bootstrap as AMP tasks:
 a configuration check (`deploy/check_config.py`, fails in seconds if `LLM_BASE_URL`, `LLM_MODEL`
-or `IMPALA_HOST` is empty, still holds the CHANGE-ME placeholder, or was stored incorrectly by the
-Configure Project form), one install session (`deploy/install_deps.py`), three jobs (`scripts/fetch_images.py`,
+or `IMPALA_HOST` is empty or was stored incorrectly by the Configure Project form), one install session (`deploy/install_deps.py`), three jobs (`scripts/fetch_images.py`,
 `deploy/bootstrap_embed.py`, `backend/data/init_db.py`), one session that saves a workload
 token for the Application (`deploy/save_session_token.py`), and the Application itself
 (`deploy/app.py`, 4 vCPU / 16 GB). In a Workbench choose **New Project > Initial Setup: AMPs**,
 paste the repository URL, then **Configure Project**: the environment variables of section 2
-are prompted there with their defaults. Replace CHANGE-ME in `LLM_BASE_URL` and `IMPALA_HOST`
-and check `LLM_MODEL`; `CDP_TOKEN` is optional but recommended. If step 1 reports that a value
-was stored incorrectly (a known form bug for some workspace versions), correct it under Project
-Settings > Advanced > Environment Variables and restart the AMP steps. The AMP spec has no job schedule, so the
+are prompted there with their defaults. The defaults for `LLM_BASE_URL`, `LLM_MODEL` and
+`IMPALA_HOST` point at the reference demo tenant, so in that tenant nothing needs to be typed;
+in another environment change them (`IMPALA_HOST` also accepts the full JDBC URL). `CDP_TOKEN` is
+optional but recommended. Some workspace versions store an edited form field incorrectly; step 1
+then fails within seconds and names the variable. Correct it under Project Settings > Advanced >
+Environment Variables and restart the AMP steps. The AMP spec has no job schedule, so the
 6-hourly token refresh job below exists only on the manual path; with an AMP either set
 `CDP_TOKEN` or re-run `deploy/save_session_token.py` from a session before the token expires.
 Admins can also add the repository to a custom AMP catalog (Site Administration > AMPs).

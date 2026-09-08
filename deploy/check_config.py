@@ -6,9 +6,8 @@ standard library (nothing is installed yet) and runs inside a Cloudera AI sessio
 
   python deploy/check_config.py
 
-Fails (non-zero exit) when LLM_BASE_URL, LLM_MODEL or IMPALA_HOST is empty, still holds
-the CHANGE-ME placeholder from .project-metadata.yaml, or was stored incorrectly by the
-Configure Project form (some workspace versions save a browser event object instead of
+Fails (non-zero exit) when LLM_BASE_URL, LLM_MODEL or IMPALA_HOST is empty or was stored
+incorrectly by the Configure Project form (some workspace versions save a browser event object instead of
 the typed text for fields that start empty). Connectivity problems are reported as
 warnings only: the endpoint or warehouse may still be starting, and the later steps
 report them precisely.
@@ -41,22 +40,27 @@ def _token() -> str:
         return ""
 
 
-PLACEHOLDER = "CHANGE-ME"
 FORM_BUG_MARKERS = ("dispatchConfig", "nativeEvent", "_targetInst")
+
+
+def _bare_host(value: str) -> str:
+    """Same rule as backend/tools/db.py normalize_host (kept inline: nothing is installed yet)."""
+    v = value.strip()
+    for prefix in ("jdbc:impala://", "jdbc:hive2://", "https://", "http://"):
+        if v.lower().startswith(prefix):
+            v = v[len(prefix):]
+            break
+    return v.split("/", 1)[0].split(";", 1)[0].split(":", 1)[0].strip()
 
 
 def _diagnose(var: str, val: str, hint: str) -> str | None:
     if not val:
         return f"{var} is empty: set it to the {hint}"
-    if PLACEHOLDER in val:
-        return f"{var} still contains {PLACEHOLDER}: replace it with the {hint}"
     if val.startswith("{") or any(m in val for m in FORM_BUG_MARKERS):
         return (f"{var} holds a browser event object instead of text (a Configure Project form bug); "
                 f"set it to the {hint}")
     if var == "LLM_BASE_URL" and not val.startswith(("http://", "https://")):
         return f"{var} must start with http:// or https://; got {val[:60]!r}"
-    if var == "IMPALA_HOST" and ("/" in val or ":" in val):
-        return f"{var} must be a bare hostname, without scheme, port or path; got {val[:60]!r}"
     return None
 
 
@@ -80,7 +84,10 @@ def main() -> int:
 
     db_backend = os.getenv("DB_BACKEND", "impala")
     if db_backend == "impala":
-        host, port = os.environ["IMPALA_HOST"], int(os.getenv("IMPALA_PORT", "443"))
+        host = _bare_host(os.environ["IMPALA_HOST"])
+        port = int(os.getenv("IMPALA_PORT", "443"))
+        if host != os.environ["IMPALA_HOST"].strip():
+            print(f"IMPALA_HOST     normalized to {host} (a JDBC URL was pasted; that is fine)")
         try:
             with socket.create_connection((host, port), timeout=10):
                 print(f"Impala          reachable at {host}:{port}")

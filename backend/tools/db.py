@@ -79,6 +79,16 @@ _impala_conn = None
 _impala_lock = threading.Lock()
 
 
+def normalize_host(value: str) -> str:
+    """Reduce a pasted JDBC URL or http(s) URL to the bare Impala coordinator hostname."""
+    v = (value or "").strip()
+    for prefix in ("jdbc:impala://", "jdbc:hive2://", "https://", "http://"):
+        if v.lower().startswith(prefix):
+            v = v[len(prefix):]
+            break
+    return v.split("/", 1)[0].split(";", 1)[0].split(":", 1)[0].strip()
+
+
 def impala_settings() -> dict:
     user = (
         os.getenv("IMPALA_USER")
@@ -87,7 +97,7 @@ def impala_settings() -> dict:
         or os.getenv("USER", "")
     )
     return {
-        "host": os.getenv("IMPALA_HOST", ""),
+        "host": normalize_host(os.getenv("IMPALA_HOST", "")),
         "port": int(os.getenv("IMPALA_PORT", "443")),
         "http_path": os.getenv("IMPALA_HTTP_PATH", "cliservice"),
         "user": user,
