@@ -6,9 +6,12 @@ standard library (nothing is installed yet) and runs inside a Cloudera AI sessio
 
   python deploy/check_config.py
 
-Fails (non-zero exit) when LLM_BASE_URL or IMPALA_HOST is empty. Connectivity
-problems are reported as warnings only: the endpoint or warehouse may still be
-starting, and the later steps report them precisely.
+Fails (non-zero exit) when LLM_BASE_URL, LLM_MODEL or IMPALA_HOST is empty, still holds
+the CHANGE-ME placeholder from .project-metadata.yaml, or was stored incorrectly by the
+Configure Project form (some workspace versions save a browser event object instead of
+the typed text for fields that start empty). Connectivity problems are reported as
+warnings only: the endpoint or warehouse may still be starting, and the later steps
+report them precisely.
 """
 
 import json
@@ -38,19 +41,41 @@ def _token() -> str:
         return ""
 
 
+PLACEHOLDER = "CHANGE-ME"
+FORM_BUG_MARKERS = ("dispatchConfig", "nativeEvent", "_targetInst")
+
+
+def _diagnose(var: str, val: str, hint: str) -> str | None:
+    if not val:
+        return f"{var} is empty: set it to the {hint}"
+    if PLACEHOLDER in val:
+        return f"{var} still contains {PLACEHOLDER}: replace it with the {hint}"
+    if val.startswith("{") or any(m in val for m in FORM_BUG_MARKERS):
+        return (f"{var} holds a browser event object instead of text (a Configure Project form bug); "
+                f"set it to the {hint}")
+    if var == "LLM_BASE_URL" and not val.startswith(("http://", "https://")):
+        return f"{var} must start with http:// or https://; got {val[:60]!r}"
+    if var == "IMPALA_HOST" and ("/" in val or ":" in val):
+        return f"{var} must be a bare hostname, without scheme, port or path; got {val[:60]!r}"
+    return None
+
+
 def main() -> int:
     problems = []
     for var, hint in REQUIRED.items():
         val = os.getenv(var, "").strip()
-        print(f"{var:14s} = {val or '<empty>'}")
-        if not val:
-            problems.append(f"{var} is empty: set it to the {hint}")
+        shown = val if len(val) < 120 else val[:100] + "..."
+        print(f"{var:14s} = {shown or '<empty>'}")
+        problem = _diagnose(var, val, hint)
+        if problem:
+            problems.append(problem)
     if problems:
         print("\nCONFIGURATION INCOMPLETE")
         for p in problems:
             print(" -", p)
-        print("\nSet the values in Project Settings > Advanced > Environment Variables, "
-              "then restart the AMP steps (or run deploy/cml_setup.py --run from a session).")
+        print("\nFix: open Project Settings > Advanced > Environment Variables, replace the value(s) "
+              "with the real text, save, then restart the AMP steps from the AMP status page "
+              "(or run deploy/install_deps.py and deploy/cml_setup.py --run from a session).")
         return 1
 
     db_backend = os.getenv("DB_BACKEND", "impala")

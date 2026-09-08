@@ -25,8 +25,9 @@ environment_variables:
     default: "caii"
     description: "LLM provider. caii = Cloudera AI Inference (default). Any other OpenAI-compatible server: openai_compatible."
   LLM_BASE_URL:
-    default: ""
-    description: "REQUIRED. OpenAI-compatible base URL of a running Cloudera AI Inference chat endpoint, e.g. https://DOMAIN/namespaces/serving-default/endpoints/ENDPOINT/v1 for NIM, or .../openai/v1 for vLLM. The first AMP step fails if this is left empty."
+    default: "https://CHANGE-ME/namespaces/serving-default/endpoints/CHANGE-ME/v1"
+    description: "REQUIRED. Replace CHANGE-ME: the OpenAI-compatible base URL of a running Cloudera AI Inference chat endpoint (endpoint page in the AI Inference UI, without /chat/completions). NIM endpoints end in /v1, vLLM endpoints in /openai/v1. The first AMP step fails while CHANGE-ME is still in the value."
+    required: true
   LLM_MODEL:
     default: "meta/llama-3.1-8b-instruct"
     description: "Model id reported by the endpoint's /models route. Validated: meta/llama-3.1-8b-instruct (NIM), Qwen/Qwen2.5-7B-Instruct (vLLM)."
@@ -44,8 +45,9 @@ environment_variables:
     default: "impala"
     description: "Tabular backend. impala = Iceberg tables via Cloudera Data Warehouse (default). duckdb = local file, laptop only."
   IMPALA_HOST:
-    default: ""
-    description: "REQUIRED. Impala coordinator host of the Virtual Warehouse, the host part of its JDBC URL in Cloudera Data Warehouse, e.g. coordinator-WAREHOUSE.dw-ENV.cloudera.site. The first AMP step fails if this is left empty."
+    default: "coordinator-CHANGE-ME.dw-CHANGE-ME.cloudera.site"
+    description: "REQUIRED. Replace CHANGE-ME: the Impala coordinator host of the Virtual Warehouse, the host part of its JDBC URL (Cloudera Data Warehouse > Virtual Warehouses > Copy JDBC URL). The first AMP step fails while CHANGE-ME is still in the value."
+    required: true
   IMPALA_PORT:
     default: "443"
     description: "Impala HTTP port."
@@ -99,11 +101,12 @@ tasks:
   - type: run_session
     name: Check configuration
     script: deploy/check_config.py
-    short_summary: Verify that LLM_BASE_URL, LLM_MODEL and IMPALA_HOST are set before installing anything.
+    short_summary: Verify that LLM_BASE_URL, LLM_MODEL and IMPALA_HOST hold real values before installing anything.
     long_summary: >-
-      Fails within seconds when a required value was left empty on the Configure Project page,
-      and warns when the AI Inference endpoint or the Impala warehouse cannot be reached yet.
-      Fix the values under Project Settings > Advanced > Environment Variables and relaunch.
+      Fails within seconds when a value still contains CHANGE-ME, is empty, or was stored incorrectly
+      by the Configure Project form, and warns when the AI Inference endpoint or the Impala warehouse
+      cannot be reached yet. Fix the values under Project Settings > Advanced > Environment Variables,
+      then restart the AMP steps.
     kernel: python3
     cpu: 1
     memory: 2
