@@ -6,15 +6,15 @@
 # websockets 16.1.1, requests 2.34.2, numpy 1.26.4, duckdb 1.5.5, impyla 0.22.0, openai 2.54.0,
 # crewai 1.15.18, torch 2.14.0+cpu, torchvision 0.29.0+cpu, pillow 12.3.0.
 # `openai` is the client library used for every OpenAI-compatible endpoint, including Cloudera AI Inference.
-fastapi
-uvicorn[standard]
-websockets
-python-dotenv
-requests
-numpy
-duckdb
-impyla
-openai
-crewai
-open-clip-torch
-pillow
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+websockets==16.1.1
+python-dotenv==1.2.3
+requests==2.34.2
+numpy==1.26.4
+duckdb==1.5.5
+impyla==0.22.0
+openai==2.54.0
+crewai==1.15.18
+open-clip-torch==3.3.0
+pillow==12.3.0
