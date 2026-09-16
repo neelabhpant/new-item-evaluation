@@ -1,4 +1,14 @@
 # New Item Evaluation Platform
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](#tech-stack)
+[![Cloudera AMP](https://img.shields.io/badge/Cloudera-Blueprint-f96702.svg)](DEPLOY_CLOUDERA.md)
+[![Multimodal](https://img.shields.io/badge/Intelligence-Multimodal%20(CLIP)-8C4FFF.svg)](#new-item-evaluation-platform)
+[![Stars](https://img.shields.io/github/stars/neelabhpant/new-item-evaluation?logo=github)](https://github.com/neelabhpant/new-item-evaluation/stargazers)
+[![Forks](https://img.shields.io/github/forks/neelabhpant/new-item-evaluation?logo=github)](https://github.com/neelabhpant/new-item-evaluation/network/members)
+
+<p align="center">
+        <img width="1024" height="559" alt="image" src="https://github.com/user-attachments/assets/36200923-a7bb-4e61-b1a4-aa302c5e64d1" />
+</p>
 
 A sequential agentic workflow that evaluates new CPG / Grocery product proposals from suppliers against a retailer's existing assortment using multimodal (image + text) intelligence. A supplier submits a new product (images + data) and AI agents evaluate it step by step: visual similarity analysis, cannibalization risk, market context, financial projection, and a final recommendation.
 
@@ -237,3 +247,8 @@ Computed in `backend/pipeline/orchestrator.py:compute_verdict()`.
 The catalog is 295 snack products from [Open Food Facts](https://world.openfoodfacts.org). Product metadata in `data/catalog_products.json` is available under the Open Database License (ODbL); product images are downloaded at bootstrap from images.openfoodfacts.org and are under CC BY-SA, so they are not committed here. Sales, margin, vendor and benchmark figures are synthetic (`backend/data/init_db.py`, fixed seed) and describe no real retailer.
 
 Code is licensed under the Apache License 2.0, see [LICENSE](LICENSE).
+
+
+## Disclaimer
+
+*This blueprint is intended for Proof-of-Concept and research use only. It is not designed for production deployment. Use in production environments is at the user's own risk. The authors and contributors accept no liability for operational impacts or damages.*
