@@ -1,8 +1,42 @@
 # New Item Evaluation Platform
 
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](backend/requirements.txt)
+[![Cloudera Blueprint](https://img.shields.io/badge/Cloudera-Blueprint-f96702.svg)](.project-metadata.yaml)
+[![Catalog](https://img.shields.io/badge/Catalog-Developer%20Example-6b4cff.svg)](.project-metadata.yaml)
+[![Stars](https://img.shields.io/github/stars/neelabhpant/new-item-evaluation?logo=github)](https://github.com/neelabhpant/new-item-evaluation/stargazers)
+[![Watchers](https://img.shields.io/github/watchers/neelabhpant/new-item-evaluation?logo=github)](https://github.com/neelabhpant/new-item-evaluation/watchers)
+[![Forks](https://img.shields.io/github/forks/neelabhpant/new-item-evaluation?logo=github)](https://github.com/neelabhpant/new-item-evaluation/network/members)
+
+
+<p align="center">
+  <img width="612" height="350" alt="image" src="https://github.com/user-attachments/assets/798b7a05-320f-4e0e-85e3-c2163380f1f5" />
+</p>
+
 A sequential agentic workflow that evaluates new CPG / Grocery product proposals from suppliers against a retailer's existing assortment using multimodal (image + text) intelligence. A supplier submits a new product (images + data) and AI agents evaluate it step by step: visual similarity analysis, cannibalization risk, market context, financial projection, and a final recommendation.
 
 The core differentiator: OpenSearch multimodal embeddings let the agents *see* what products look like, not just read their descriptions.
+
+
+---
+## Demo
+
+### Risk and Market Analysis
+<img width="1867" height="902" alt="image" src="https://github.com/user-attachments/assets/81ef0250-cfc4-43e2-8414-b880982f02e4" />
+
+### Product Comparison
+<img width="993" height="867" alt="image" src="https://github.com/user-attachments/assets/33993f96-99db-4fc9-acff-05fa1a837e00" />
+
+### Merchandising Lead
+<img width="1868" height="898" alt="image" src="https://github.com/user-attachments/assets/7f5539fd-84ee-4a8b-9d6d-d405f4527e4e" />
+
+### Financial Projection
+<img width="1011" height="830" alt="image" src="https://github.com/user-attachments/assets/98a111a1-3d4b-444d-b011-3ffb33615554" />
+
+### Current competitor placement and recommended position
+<img width="1025" height="792" alt="image" src="https://github.com/user-attachments/assets/3e63f0fc-3bbd-4124-ba24-8c056f760274" />
+
+
 
 ---
 
@@ -237,3 +271,7 @@ Computed in `backend/pipeline/orchestrator.py:compute_verdict()`.
 The catalog is 295 snack products from [Open Food Facts](https://world.openfoodfacts.org). Product metadata in `data/catalog_products.json` is available under the Open Database License (ODbL); product images are downloaded at bootstrap from images.openfoodfacts.org and are under CC BY-SA, so they are not committed here. Sales, margin, vendor and benchmark figures are synthetic (`backend/data/init_db.py`, fixed seed) and describe no real retailer.
 
 Code is licensed under the Apache License 2.0, see [LICENSE](LICENSE).
+
+## Disclaimer
+
+*This blueprint is intended for Proof-of-Concept and research use only. It is not designed for production deployment. Use in production environments is at the user's own risk. The authors and contributors accept no liability for operational impacts or damages.*
