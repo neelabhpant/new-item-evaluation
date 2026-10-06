@@ -10,6 +10,10 @@ The core differentiator: OpenSearch multimodal embeddings let the agents *see* w
 
 ## Architecture
 
+![Reference architecture](images/reference-architecture.svg)
+
+Reference architecture on Cloudera AI. The Application pod in the AI Workbench project runs the API and UI, CLIP and an embedded OpenSearch k-NN index. Sales, category and vendor data come from Iceberg tables through an Impala Virtual Warehouse in Cloudera Data Warehouse, and the three agents run on an open-weight model served by Cloudera AI Inference. Numbers 1 to 7 follow one evaluation: submit, embed, find look-alikes, query Impala, compute the verdict, run the agents, validate and save.
+
 Hybrid pipeline: deterministic data collection + agentic reasoning.
 
 ```
