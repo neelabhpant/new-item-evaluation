@@ -22,9 +22,7 @@ export default function ReasonerHeader({ activeTab, onTabChange, evaluationId }:
     <header className="bg-reasoner-paper border-b border-reasoner-line font-sans">
       <div className="flex items-center gap-5 px-7 h-[58px]">
         <div className="flex items-center gap-2.5">
-          <div className="w-[26px] h-[26px] bg-reasoner-ink text-reasoner-paper rounded-md grid place-items-center text-sm font-semibold">
-            N
-          </div>
+          <img src="/logo-mark.png" alt="New Item Evaluation" className="w-[30px] h-[30px] object-contain" />
           <div className="text-sm font-semibold text-reasoner-ink">NIE</div>
           <span className="text-xs text-reasoner-dim">/</span>
           <div className="text-[13px] text-reasoner-body">{currentLabel}</div>

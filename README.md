@@ -1,3 +1,5 @@
+<p align="center"><img src="frontend/public/logo.png" alt="New Item Evaluation" width="420"></p>
+
 # New Item Evaluation Platform
 
 A sequential agentic workflow that evaluates new CPG / Grocery product proposals from suppliers against a retailer's existing assortment using multimodal (image + text) intelligence. A supplier submits a new product (images + data) and AI agents evaluate it step by step: visual similarity analysis, cannibalization risk, market context, financial projection, and a final recommendation.

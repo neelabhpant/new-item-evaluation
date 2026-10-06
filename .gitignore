@@ -63,3 +63,6 @@ data/catalog_embeddings.jsonl
 
 # Blueprint submission folder (internal catalog material, not for the public repo)
 blueprint/
+
+# npm cache created by builds run from the repo root
+.npm/
